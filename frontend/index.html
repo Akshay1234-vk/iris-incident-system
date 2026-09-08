@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IRIS - Intelligent Resolution Incident System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: '#3b82f6',
+          }
+        }
+      }
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="bg-black text-zinc-100 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- TOP HEADER -->
+  <header class="border-b border-zinc-800/80 bg-zinc-950/90 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex flex-wrap items-center justify-between gap-3">
+      
+      <!-- Brand Logo -->
+      <div class="flex items-center space-x-3">
+        <div class="w-8 h-8 rounded-lg bg-zinc-900 border border-zinc-700 flex items-center justify-center text-white">
+          <i class="fa-solid fa-database text-sm"></i>
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="text-base font-bold tracking-tight text-white">IRIS</h1>
+            <span class="text-[11px] px-1.5 py-0.5 rounded font-mono bg-zinc-800 text-zinc-300 border border-zinc-700">DBMS Review 1</span>
+          </div>
+          <p class="text-xs text-zinc-400">Intelligent Resolution Incident System &bull; Database-First Knowledge</p>
+        </div>
+      </div>
+
+      <!-- Quick Metrics -->
+      <div class="flex items-center gap-2 sm:gap-3 text-xs">
+        <div class="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 flex items-center space-x-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+          <span class="text-zinc-400">Total Incidents:</span>
+          <span id="stat-total" class="font-bold text-white">0</span>
+        </div>
+        <div class="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 flex items-center space-x-1.5">
+          <span class="text-zinc-400">Resolved:</span>
+          <span id="stat-resolved" class="font-bold text-emerald-400">0</span>
+        </div>
+        <div class="bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1 flex items-center space-x-1.5">
+          <span class="text-zinc-400">Rate:</span>
+          <span id="stat-rate" class="font-bold text-blue-400">100%</span>
+        </div>
+        <button id="btn-reset-seed" title="Reset to clean demo data" class="px-2 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 rounded-lg transition text-xs flex items-center space-x-1 cursor-pointer">
+          <i class="fa-solid fa-rotate-left text-[10px]"></i>
+          <span class="hidden sm:inline">Reset</span>
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- NAVIGATION TABS -->
+  <div class="border-b border-zinc-800 bg-zinc-950">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex space-x-2 sm:space-x-4">
+      <button class="nav-tab active flex items-center space-x-2 py-2.5 px-3 text-xs font-semibold border-b-2 border-white text-white transition cursor-pointer" data-tab="tab-demo">
+        <i class="fa-solid fa-play text-[10px]"></i>
+        <span>Live Demo</span>
+      </button>
+      <button class="nav-tab flex items-center space-x-2 py-2.5 px-3 text-xs font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition cursor-pointer" data-tab="tab-explorer">
+        <i class="fa-solid fa-table text-[10px]"></i>
+        <span>Database Explorer & SQL</span>
+      </button>
+      <button class="nav-tab flex items-center space-x-2 py-2.5 px-3 text-xs font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition cursor-pointer" data-tab="tab-history">
+        <i class="fa-solid fa-folder text-[10px]"></i>
+        <span>Knowledge Base</span>
+      </button>
+      <button class="nav-tab flex items-center space-x-2 py-2.5 px-3 text-xs font-medium border-b-2 border-transparent text-zinc-400 hover:text-white transition cursor-pointer" data-tab="tab-presentation">
+        <i class="fa-solid fa-book-open text-[10px]"></i>
+        <span>Review 1 Notes</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- MAIN CONTENT -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5">
+
+    <!-- TAB 1: LIVE DEMO -->
+    <section id="tab-demo" class="tab-pane block space-y-4">
+      
+      <!-- 3 Steps Bar -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div class="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center space-x-3">
+          <div class="w-6 h-6 rounded-md bg-zinc-800 text-zinc-200 flex items-center justify-center font-bold text-xs">1</div>
+          <div>
+            <h4 class="text-xs font-bold text-white">Log Problem</h4>
+            <p class="text-[11px] text-zinc-400">Inserts row into <code class="text-zinc-200">problems</code> table</p>
+          </div>
+        </div>
+        <div class="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center space-x-3">
+          <div class="w-6 h-6 rounded-md bg-zinc-800 text-zinc-200 flex items-center justify-center font-bold text-xs">2</div>
+          <div>
+            <h4 class="text-xs font-bold text-white">SQL Search & AI</h4>
+            <p class="text-[11px] text-zinc-400">Retrieves past pairs & generates fix</p>
+          </div>
+        </div>
+        <div class="p-3 rounded-xl bg-zinc-950 border border-zinc-800 flex items-center space-x-3">
+          <div class="w-6 h-6 rounded-md bg-zinc-800 text-zinc-200 flex items-center justify-center font-bold text-xs">3</div>
+          <div>
+            <h4 class="text-xs font-bold text-white">Update Database</h4>
+            <p class="text-[11px] text-zinc-400">Inserts into <code class="text-zinc-200">solutions</code> table</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        
+        <!-- LEFT COLUMN: PROBLEM INPUT -->
+        <div class="lg:col-span-5 space-y-3">
+          <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+            
+            <div class="flex items-center justify-between pb-2 border-b border-zinc-800">
+              <h3 class="font-bold text-xs uppercase tracking-wider text-zinc-200">
+                <i class="fa-solid fa-plus-circle text-zinc-400 mr-1"></i> Log New Problem
+              </h3>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">Step 1</span>
+            </div>
+
+            <!-- Simple Demo Presets -->
+            <div>
+              <label class="block text-[11px] font-semibold text-zinc-400 mb-1.5">
+                Simple Demo Cases (Click to load):
+              </label>
+              <div class="flex flex-wrap gap-1.5">
+                <button class="preset-btn px-2.5 py-1 text-xs rounded-lg bg-zinc-900 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-300 transition cursor-pointer"
+                  data-title="Slow API Response on User Profile Page"
+                  data-category="Performance"
+                  data-severity="High"
+                  data-keywords="api, latency, slow query, missing index"
+                  data-desc="User profile API takes over 5 seconds to load when fetching customer details.">
+                  ⚡ Slow API Response
+                </button>
+                <button class="preset-btn px-2.5 py-1 text-xs rounded-lg bg-zinc-900 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-300 transition cursor-pointer"
+                  data-title="User Login Failing with 401 Unauthorized"
+                  data-category="Authentication"
+                  data-severity="High"
+                  data-keywords="login, auth, 401, jwt, token"
+                  data-desc="Users are unable to log in and receive 401 Unauthorized errors after password reset.">
+                  🔑 User Login 401 Error
+                </button>
+                <button class="preset-btn px-2.5 py-1 text-xs rounded-lg bg-zinc-900 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-300 transition cursor-pointer"
+                  data-title="Database Connection Timeout Under Heavy Load"
+                  data-category="Database"
+                  data-severity="Critical"
+                  data-keywords="database, timeout, connection pool, postgres"
+                  data-desc="Database rejects new incoming connections with timeout error when traffic surges.">
+                  💾 DB Connection Timeout
+                </button>
+                <button class="preset-btn px-2.5 py-1 text-xs rounded-lg bg-zinc-900 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-300 transition cursor-pointer"
+                  data-title="Payment Gateway Network Timeout"
+                  data-category="Network"
+                  data-severity="Critical"
+                  data-keywords="payment, network, timeout, gateway"
+                  data-desc="Checkout page times out while waiting for response from payment provider during checkout.">
+                  🌐 Payment Gateway Timeout
+                </button>
+                <button class="preset-btn px-2.5 py-1 text-xs rounded-lg bg-zinc-900 hover:bg-zinc-800 hover:text-white border border-zinc-800 text-zinc-300 transition cursor-pointer"
+                  data-title="Deadlock Detected on Money Transfer Transaction"
+                  data-category="Database"
+                  data-severity="High"
+                  data-keywords="deadlock, transfer, transaction, sql"
+                  data-desc="Simultaneous fund transfers between user accounts failed with database deadlock error.">
+                  🔄 Deadlock on Transfer
+                </button>
+              </div>
+            </div>
+
+            <!-- Form -->
+            <form id="problem-form" class="space-y-2.5">
+              <div>
+                <label class="block text-[11px] font-medium text-zinc-400 mb-1">Problem Title</label>
+                <input type="text" id="input-title" required placeholder="e.g. Slow API Response on User Profile Page" class="w-full px-3 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500">
+              </div>
+
+              <div class="grid grid-cols-2 gap-2">
+                <div>
+                  <div class="flex items-center justify-between mb-1"><label class="text-[11px] font-medium text-zinc-400">Category</label><span id="auto-inferred-badge" class="hidden text-[10px] font-mono px-1.5 py-0.2 rounded bg-blue-950/80 text-blue-400 border border-blue-800 animate-pulse"><i class="fa-solid fa-wand-magic-sparkles mr-1"></i>AI Inferred</span></div>
+                  <select id="input-category" required class="w-full px-2.5 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-500">
+                    <option value="Performance">Performance</option>
+                    <option value="Authentication">Authentication</option>
+                    <option value="Database">Database</option>
+                    <option value="Network">Network</option>
+                    <option value="DevOps">DevOps</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-[11px] font-medium text-zinc-400 mb-1">Severity</label>
+                  <select id="input-severity" class="w-full px-2.5 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs text-white focus:outline-none focus:border-zinc-500">
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High" selected>High</option>
+                    <option value="Critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-medium text-zinc-400 mb-1">Keywords</label>
+                <input type="text" id="input-keywords" placeholder="e.g. api, latency, missing index" class="w-full px-3 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500">
+              </div>
+
+              <div>
+                <label class="block text-[11px] font-medium text-zinc-400 mb-1">Problem Description</label>
+                <textarea id="input-description" required rows="2" placeholder="Brief description of the problem..." class="w-full px-3 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500 resize-none"></textarea>
+              </div>
+
+              <button type="submit" id="btn-submit-problem" class="w-full py-2 px-4 bg-white hover:bg-zinc-200 text-black font-semibold text-xs rounded-lg transition flex items-center justify-center space-x-2 cursor-pointer shadow">
+                <i class="fa-solid fa-bolt text-xs"></i>
+                <span>Log to Database & Analyze</span>
+              </button>
+            </form>
+
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: AI REASONING & SQL RESOLUTION -->
+        <div class="lg:col-span-7 space-y-3">
+
+          <!-- Empty State -->
+          <div id="ai-empty-state" class="bg-zinc-950 border border-zinc-800 rounded-xl p-10 text-center flex flex-col items-center justify-center space-y-2.5">
+            <div class="w-10 h-10 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 text-lg">
+              <i class="fa-solid fa-code-branch"></i>
+            </div>
+            <h4 class="text-sm font-bold text-zinc-200">Ready to Analyze</h4>
+            <p class="text-xs text-zinc-400 max-w-sm">Select one of the demo cases on the left and click <strong>"Log to Database & Analyze"</strong> to see real-time SQL context retrieval and resolution.</p>
+          </div>
+
+          <!-- Loading State -->
+          <div id="ai-loading-state" class="hidden bg-zinc-950 border border-zinc-800 rounded-xl p-8 text-center flex flex-col items-center justify-center space-y-3">
+            <div class="w-8 h-8 rounded-full border-2 border-zinc-700 border-t-white animate-spin"></div>
+            <p class="text-xs font-semibold text-zinc-300">Executing SQL search & synthesizing AI recommendation...</p>
+          </div>
+
+          <!-- Active Analysis Card -->
+          <div id="ai-active-card" class="hidden space-y-3">
+            
+            <!-- SQL Query Box -->
+            <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-3 space-y-2">
+              <div class="flex items-center justify-between text-xs">
+                <span class="font-mono text-zinc-400 font-semibold uppercase text-[11px] flex items-center space-x-1">
+                  <i class="fa-solid fa-terminal text-zinc-500"></i>
+                  <span>Live SQL Context Retrieval:</span>
+                </span>
+                <span id="retrieval-time-badge" class="text-[10px] font-mono text-zinc-400 bg-zinc-900 px-1.5 py-0.5 rounded border border-zinc-800">0.5ms</span>
+              </div>
+              <pre class="bg-black p-2.5 rounded-lg text-[11px] font-mono text-emerald-400 border border-zinc-900 overflow-x-auto whitespace-pre-wrap"><code id="sql-query-display">SELECT p.id, p.title, s.solution_text FROM problems p JOIN solutions s ON p.id = s.problem_id WHERE ...</code></pre>
+              <div class="text-[11px] text-zinc-400 flex items-center justify-between">
+                <span>Matched <strong id="precedent-count" class="text-white">1</strong> historical problem/solution record</span>
+                <span class="text-zinc-500">Relational SQL JOIN</span>
+              </div>
+            </div>
+
+            <!-- AI Recommendation Box -->
+            <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+              
+              <div class="flex items-start justify-between pb-2 border-b border-zinc-800">
+                <div>
+                  <span id="card-category-badge" class="text-[10px] uppercase font-mono px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">Database</span>
+                  <h3 id="card-problem-title" class="text-sm font-bold text-white mt-1">Problem Title</h3>
+                </div>
+                <div class="text-right">
+                  <span class="text-[10px] text-zinc-400 block">Confidence</span>
+                  <span id="confidence-text" class="text-xs font-bold text-emerald-400">96%</span>
+                </div>
+              </div>
+
+              <!-- Root Cause -->
+              <div class="bg-black p-2.5 rounded-lg border border-zinc-900 space-y-1">
+                <span class="text-[10px] uppercase font-semibold text-zinc-400 block">Root Cause Diagnosis:</span>
+                <p id="card-root-cause" class="text-xs text-zinc-300">Root cause description...</p>
+              </div>
+
+              <!-- Recommended Solution -->
+              <div class="bg-zinc-900/60 p-3 rounded-lg border border-zinc-800 space-y-1">
+                <span class="text-[10px] uppercase font-bold text-emerald-400 block flex items-center space-x-1">
+                  <i class="fa-solid fa-check text-xs"></i>
+                  <span>Recommended Primary Solution:</span>
+                </span>
+                <p id="card-primary-solution" class="text-xs font-medium text-white leading-relaxed">Solution text...</p>
+              </div>
+
+              <!-- Action Steps -->
+              <div class="space-y-1">
+                <span class="text-[10px] uppercase font-semibold text-zinc-400 block">Actionable Steps:</span>
+                <div id="card-action-steps" class="text-xs text-zinc-300 space-y-1 bg-black p-2.5 rounded-lg border border-zinc-900"></div>
+              </div>
+
+              <!-- DECISION ACTIONS -->
+              <div class="pt-2 border-t border-zinc-800 flex flex-wrap gap-2">
+                <button id="btn-accept-ai" class="flex-1 py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg transition flex items-center justify-center space-x-1.5 cursor-pointer shadow">
+                  <i class="fa-solid fa-check-double text-xs"></i>
+                  <span>Accept Solution & Update Database (SQL)</span>
+                </button>
+                <button id="btn-custom-solution" class="py-2 px-3 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs rounded-lg border border-zinc-700 transition cursor-pointer">
+                  <i class="fa-solid fa-pen text-[10px]"></i>
+                  <span>Custom Solution</span>
+                </button>
+              </div>
+
+              <!-- Custom Box -->
+              <div id="custom-solution-box" class="hidden bg-black p-3 rounded-lg border border-zinc-800 space-y-2">
+                <textarea id="input-custom-solution" rows="2" placeholder="Write custom solution..." class="w-full p-2 bg-zinc-900 border border-zinc-800 rounded text-xs text-white focus:outline-none focus:border-zinc-600 resize-none"></textarea>
+                <div class="flex justify-end space-x-2">
+                  <button id="btn-cancel-custom" class="px-2.5 py-1 bg-zinc-900 text-zinc-400 text-xs rounded cursor-pointer">Cancel</button>
+                  <button id="btn-save-custom" class="px-2.5 py-1 bg-white text-black font-semibold text-xs rounded cursor-pointer">Save to Database</button>
+                </div>
+              </div>
+
+              <!-- Success Alert -->
+              <div id="ingestion-success-banner" class="hidden p-2.5 rounded-lg bg-zinc-900 border border-emerald-500/40 text-xs text-emerald-400 flex items-center space-x-2">
+                <i class="fa-solid fa-circle-check text-emerald-400"></i>
+                <span><strong>Updated:</strong> Saved to <code class="text-white">solutions</code> table and marked as <strong class="text-white">RESOLVED</strong>.</span>
+              </div>
+
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- TAB 2: DATABASE EXPLORER & SQL -->
+    <section id="tab-explorer" class="tab-pane hidden space-y-4">
+      
+      <!-- SQL Runner Console -->
+      <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-terminal text-zinc-400"></i>
+            <h3 class="font-bold text-xs text-white uppercase tracking-wider">SQL Query Console</h3>
+          </div>
+          <div class="flex flex-wrap gap-1.5">
+            <button class="sql-preset px-2 py-1 text-xs rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition cursor-pointer"
+              data-query="SELECT id, title, category, status FROM problems ORDER BY id DESC;">
+              Problems Table
+            </button>
+            <button class="sql-preset px-2 py-1 text-xs rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition cursor-pointer"
+              data-query="SELECT p.title, s.solution_text, s.source, s.confidence_score FROM problems p JOIN solutions s ON p.id = s.problem_id;">
+              JOIN Problems + Solutions
+            </button>
+            <button class="sql-preset px-2 py-1 text-xs rounded bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-800 transition cursor-pointer"
+              data-query="SELECT category, COUNT(*) as count FROM problems GROUP BY category;">
+              Group By Category
+            </button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <textarea id="sql-console-input" rows="2" class="w-full px-3 py-1.5 bg-black border border-zinc-800 rounded-lg text-xs font-mono text-emerald-400 focus:outline-none focus:border-zinc-600 resize-none">SELECT p.id, p.title, s.solution_text, s.source FROM problems p JOIN solutions s ON p.id = s.problem_id;</textarea>
+          <div class="flex justify-end">
+            <button id="btn-run-sql" class="px-3 py-1 bg-white hover:bg-zinc-200 text-black text-xs font-semibold rounded-lg transition cursor-pointer flex items-center space-x-1">
+              <i class="fa-solid fa-play text-[10px]"></i>
+              <span>Execute SQL</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Query Output -->
+        <div id="sql-query-results" class="hidden overflow-x-auto rounded-lg border border-zinc-800 bg-black max-h-60">
+          <table class="w-full text-left text-xs">
+            <thead id="sql-thead" class="bg-zinc-900 text-zinc-400 sticky top-0 border-b border-zinc-800 text-[11px] font-mono"></thead>
+            <tbody id="sql-tbody" class="divide-y divide-zinc-900 font-mono text-zinc-300"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Raw Tables Viewer -->
+      <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-bold text-xs text-white uppercase tracking-wider">Database Tables</h3>
+          <div class="flex space-x-1 text-xs">
+            <button class="table-switch-btn active px-2.5 py-1 rounded bg-white text-black font-semibold transition cursor-pointer" data-table="problems">problems</button>
+            <button class="table-switch-btn px-2.5 py-1 rounded bg-zinc-900 text-zinc-400 hover:text-white transition cursor-pointer" data-table="solutions">solutions</button>
+            <button class="table-switch-btn px-2.5 py-1 rounded bg-zinc-900 text-zinc-400 hover:text-white transition cursor-pointer" data-table="logs">sql_query_logs</button>
+          </div>
+        </div>
+
+        <div id="table-display-container" class="overflow-x-auto rounded-lg border border-zinc-800 bg-black max-h-80">
+          <table class="w-full text-left text-xs">
+            <thead id="raw-thead" class="bg-zinc-900 text-zinc-400 sticky top-0 border-b border-zinc-800 text-[11px] font-mono"></thead>
+            <tbody id="raw-tbody" class="divide-y divide-zinc-900 text-zinc-300"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- TAB 3: KNOWLEDGE BASE -->
+    <section id="tab-history" class="tab-pane hidden space-y-4">
+      <div class="flex flex-wrap items-center justify-between gap-3 pb-2 border-b border-zinc-800">
+        <div>
+          <h3 class="text-sm font-bold text-white">Historical Organizational Knowledge</h3>
+          <p class="text-xs text-zinc-400">All solved problems stored in database</p>
+        </div>
+        <div class="flex items-center space-x-2">
+          <input type="text" id="kb-search-input" placeholder="Search..." class="px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white focus:outline-none">
+          <select id="kb-category-filter" class="px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded-lg text-xs text-white focus:outline-none">
+            <option value="">All Categories</option>
+            <option value="Performance">Performance</option>
+            <option value="Authentication">Authentication</option>
+            <option value="Database">Database</option>
+            <option value="Network">Network</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="kb-cards-grid" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+    </section>
+
+    <!-- TAB 4: PRESENTATION CHEATSHEET -->
+    <section id="tab-presentation" class="tab-pane hidden space-y-4">
+      <div class="bg-zinc-950 border border-zinc-800 rounded-xl p-5 space-y-4 text-xs">
+        <div>
+          <span class="text-[10px] font-mono text-zinc-400 uppercase">Review 1 Talking Points</span>
+          <h2 class="text-base font-bold text-white mt-0.5">IRIS: Intelligent Resolution Incident System</h2>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-black p-3.5 rounded-lg border border-zinc-800 space-y-1.5">
+            <h4 class="font-bold text-white uppercase text-[11px]">1. Problem Statement</h4>
+            <p class="text-zinc-400 leading-relaxed">
+              Engineers constantly face repeated technical issues. Traditional tools like Jira only store static tickets without intelligence, while generic ChatGPT lacks organizational memory. IRIS connects problems with historical database solutions using SQL.
+            </p>
+          </div>
+          <div class="bg-black p-3.5 rounded-lg border border-zinc-800 space-y-1.5">
+            <h4 class="font-bold text-white uppercase text-[11px]">2. Relational Design (1:N Schema)</h4>
+            <p class="text-zinc-400 leading-relaxed">
+              <strong class="text-white">problems</strong> table (Problem_ID PK, Title, Category, Status) linked to <strong class="text-white">solutions</strong> table (Solution_ID PK, Problem_ID FK, Solution_Text, Source).
+            </p>
+          </div>
+        </div>
+
+        <div class="bg-black p-3.5 rounded-lg border border-zinc-800 space-y-2">
+          <h4 class="font-bold text-white uppercase text-[11px]">3. 30-Second Demo Flow</h4>
+          <ol class="list-decimal list-inside space-y-1 text-zinc-400">
+            <li>Click preset <em>"Slow API Response"</em> and click <em>"Log to Database & Analyze"</em>.</li>
+            <li>Point out the SQL query box: <em>"The database runs a relational JOIN to search historical fixes."</em></li>
+            <li>Show the AI generated fix & click <em>"Accept Solution & Update Database"</em>.</li>
+            <li>Switch to <em>"Database Explorer"</em> tab to show the new record in the <code>solutions</code> table.</li>
+          </ol>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- FOOTER -->
+  <footer class="border-t border-zinc-800 bg-black py-2.5 text-center text-[11px] text-zinc-500">
+    IRIS Incident Intelligence Database &bull; DBMS Review 1 Demo
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
