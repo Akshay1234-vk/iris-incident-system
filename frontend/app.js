@@ -1,26 +1,185 @@
 /**
  * IRIS (Intelligent Resolution Incident System)
- * Simple, Clean Frontend Controller
+ * Frontend Controller with Operator Identity, Gemini 3.8 Flash, and Closed-Loop SQL Ingestion
  */
 
-const API_BASE = '';
-let currentProblemId = null;
-let currentAnalysis = null;
+const API_BASE = window.location.origin;
 
-document.addEventListener('DOMContentLoaded', () => {
-  setupTabNavigation();
+// State
+let currentActiveProblemId = null;
+let currentAIAnalysis = null;
+let registeredUsers = [];
+let activeUser = {
+  id: 1,
+  username: 'akshay',
+  full_name: 'Akshay Kumar',
+  role: 'Lead SRE'
+};
+
+// Quick Presets Data
+const PRESETS = {
+  slow_api: {
+    title: 'Slow API Response on User Profile Page',
+    category: 'Performance',
+    severity: 'High',
+    keywords: 'api, latency, slow query, missing index, performance',
+    description: 'User profile API takes over 5 seconds to load when fetching customer details.'
+  },
+  auth_fail: {
+    title: 'User Login Failing with 401 Unauthorized',
+    category: 'Authentication',
+    severity: 'High',
+    keywords: 'login, auth, 401, jwt, password, token',
+    description: 'Users are unable to log in and receive 401 Unauthorized errors after password reset.'
+  },
+  db_pool: {
+    title: 'Database Connection Timeout Under Heavy Load',
+    category: 'Database',
+    severity: 'Critical',
+    keywords: 'database, timeout, connection pool, postgres, max connections',
+    description: 'Database rejects new incoming connections with timeout error when traffic surges.'
+  },
+  payment_timeout: {
+    title: 'Payment Gateway Network Timeout',
+    category: 'Network',
+    severity: 'Critical',
+    keywords: 'payment, network, timeout, gateway, checkout',
+    description: 'Checkout page times out while waiting for response from payment provider during checkout.'
+  },
+  deadlock: {
+    title: 'Deadlock Detected on Money Transfer Transaction',
+    category: 'Database',
+    severity: 'High',
+    keywords: 'deadlock, transfer, transaction, sql, lock',
+    description: 'Simultaneous fund transfers between user accounts failed with database deadlock error.'
+  }
+};
+
+// Initialize Dashboard on Load
+document.addEventListener('DOMContentLoaded', async () => {
+  initTabs();
+  await loadUsers();
+  await checkAIStatus();
+  await refreshStats();
   setupPresets();
-  setupFormHandler();
   setupAutoClassifier();
-  setupDecisionActions();
+  setupFormHandler();
+  setupAcceptSolutionHandler();
   setupDatabaseExplorer();
   setupKnowledgeBase();
-  setupResetSeed();
-  refreshStatsAndData();
+  setupModals();
+  setupResetButton();
 });
 
-// TAB NAVIGATION
-function setupTabNavigation() {
+// 1. Operator Identity & User Management
+async function loadUsers() {
+  try {
+    const res = await fetch(`${API_BASE}/api/users`);
+    registeredUsers = await res.json();
+    
+    // Check localStorage for saved operator
+    const saved = localStorage.getItem('iris_active_user');
+    if (saved) {
+      try {
+        activeUser = JSON.parse(saved);
+      } catch (e) {
+        if (registeredUsers.length > 0) activeUser = registeredUsers[0];
+      }
+    } else if (registeredUsers.length > 0) {
+      activeUser = registeredUsers[0];
+    }
+    updateOperatorUI();
+  } catch (err) {
+    console.error('Failed to load users:', err);
+  }
+}
+
+function updateOperatorUI() {
+  const nameEl = document.getElementById('header-user-name');
+  const roleEl = document.getElementById('header-user-role');
+  const initialsEl = document.getElementById('user-avatar-initials');
+  const formOpEl = document.getElementById('form-operator-display');
+  const resOpEl = document.getElementById('resolve-operator-display');
+
+  if (nameEl) nameEl.textContent = activeUser.full_name;
+  if (roleEl) roleEl.textContent = activeUser.role;
+  if (formOpEl) formOpEl.textContent = `${activeUser.full_name} (${activeUser.role})`;
+  if (resOpEl) resOpEl.textContent = `${activeUser.full_name} (${activeUser.role})`;
+
+  if (initialsEl) {
+    const initials = activeUser.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2);
+    initialsEl.textContent = initials || 'OP';
+  }
+
+  localStorage.setItem('iris_active_user', JSON.stringify(activeUser));
+}
+
+function renderUserSelectionList() {
+  const container = document.getElementById('user-selection-list');
+  if (!container) return;
+
+  container.innerHTML = registeredUsers.map(u => {
+    const isActive = u.id === activeUser.id || u.full_name === activeUser.full_name;
+    return `
+      <div class="user-select-item p-2.5 rounded-lg border ${isActive ? 'bg-blue-950/40 border-blue-600' : 'bg-zinc-900 border-zinc-800 hover:border-zinc-700'} flex items-center justify-between cursor-pointer transition" data-user-id="${u.id}">
+        <div class="flex items-center space-x-2.5">
+          <div class="w-7 h-7 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-xs text-zinc-300">
+            ${u.full_name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2)}
+          </div>
+          <div>
+            <div class="text-xs font-semibold text-white">${u.full_name}</div>
+            <div class="text-[10px] text-zinc-400">${u.role}</div>
+          </div>
+        </div>
+        ${isActive ? '<i class="fa-solid fa-check text-blue-400 text-xs mr-1"></i>' : ''}
+      </div>
+    `;
+  }).join('');
+
+  container.querySelectorAll('.user-select-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const uId = parseInt(item.dataset.userId);
+      const chosen = registeredUsers.find(u => u.id === uId);
+      if (chosen) {
+        activeUser = chosen;
+        updateOperatorUI();
+        closeModals();
+      }
+    });
+  });
+}
+
+// 2. AI Engine Status & Configuration
+async function checkAIStatus() {
+  try {
+    const res = await fetch(`${API_BASE}/api/system/status`);
+    const data = await res.json();
+    const ai = data.ai_engine;
+
+    const modelEl = document.getElementById('header-ai-model');
+    const provEl = document.getElementById('header-ai-provider');
+    const dotEl = document.getElementById('ai-status-dot');
+
+    if (ai.configured && ai.mode === 'gemini') {
+      if (modelEl) modelEl.textContent = 'Gemini 3.8 Flash';
+      if (provEl) provEl.textContent = 'Live LLM Connected';
+      if (dotEl) {
+        dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
+      }
+    } else {
+      if (modelEl) modelEl.textContent = 'Local Semantic RAG';
+      if (provEl) provEl.textContent = 'Click to configure Gemini';
+      if (dotEl) {
+        dotEl.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+      }
+    }
+  } catch (err) {
+    console.error('Failed to check AI status:', err);
+  }
+}
+
+// 3. Navigation Tabs
+function initTabs() {
   const tabs = document.querySelectorAll('.nav-tab');
   const panes = document.querySelectorAll('.tab-pane');
 
@@ -33,394 +192,36 @@ function setupTabNavigation() {
       tab.classList.add('active', 'border-white', 'text-white');
       tab.classList.remove('border-transparent', 'text-zinc-400');
 
-      const targetId = tab.getAttribute('data-tab');
-      panes.forEach(p => {
-        if (p.id === targetId) {
-          p.classList.remove('hidden');
-          p.classList.add('block');
-        } else {
-          p.classList.add('hidden');
-          p.classList.remove('block');
-        }
-      });
+      panes.forEach(p => p.classList.add('hidden'));
+      const target = document.getElementById(tab.dataset.tab);
+      if (target) target.classList.remove('hidden');
 
-      if (targetId === 'tab-explorer') {
-        loadExplorerTables('problems');
-      } else if (targetId === 'tab-history') {
-        renderKnowledgeBase();
-      }
+      if (tab.dataset.tab === 'tab-explorer') loadDatabaseTables();
+      if (tab.dataset.tab === 'tab-history') loadKnowledgeBase();
     });
   });
 }
 
-// PRESETS
+// 4. Quick Demo Presets
 function setupPresets() {
   const presetBtns = document.querySelectorAll('.preset-btn');
   presetBtns.forEach(btn => {
     btn.addEventListener('click', () => {
-      document.getElementById('input-title').value = btn.getAttribute('data-title');
-      document.getElementById('input-category').value = btn.getAttribute('data-category');
-      document.getElementById('input-severity').value = btn.getAttribute('data-severity');
-      document.getElementById('input-keywords').value = btn.getAttribute('data-keywords');
-      document.getElementById('input-description').value = btn.getAttribute('data-desc');
+      const p = PRESETS[btn.dataset.preset];
+      if (!p) return;
+      document.getElementById('input-title').value = p.title;
+      document.getElementById('input-category').value = p.category;
+      document.getElementById('input-severity').value = p.severity;
+      document.getElementById('input-keywords').value = p.keywords;
+      document.getElementById('input-description').value = p.description;
+
+      const badge = document.getElementById('auto-inferred-badge');
+      if (badge) badge.classList.add('hidden');
     });
   });
 }
 
-// FORM SUBMIT & ANALYSIS
-function setupFormHandler() {
-  const form = document.getElementById('problem-form');
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const payload = {
-      title: document.getElementById('input-title').value.trim(),
-      category: document.getElementById('input-category').value,
-      severity: document.getElementById('input-severity').value,
-      keywords: document.getElementById('input-keywords').value.trim(),
-      description: document.getElementById('input-description').value.trim()
-    };
-
-    document.getElementById('ai-empty-state').classList.add('hidden');
-    document.getElementById('ai-active-card').classList.add('hidden');
-    document.getElementById('ai-loading-state').classList.remove('hidden');
-    document.getElementById('ingestion-success-banner').classList.add('hidden');
-
-    try {
-      const createRes = await fetch(`${API_BASE}/api/problems`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const createdProb = await createRes.json();
-      currentProblemId = createdProb.id;
-
-      const analyzeRes = await fetch(`${API_BASE}/api/problems/${currentProblemId}/analyze`, {
-        method: 'POST'
-      });
-      const analysis = await analyzeRes.json();
-      currentAnalysis = analysis;
-
-      renderAnalysisCard(analysis);
-      refreshStatsAndData();
-    } catch (err) {
-      alert('Error during problem logging: ' + err.message);
-    } finally {
-      document.getElementById('ai-loading-state').classList.add('hidden');
-    }
-  });
-}
-
-function renderAnalysisCard(data) {
-  const ai = data.ai_recommendation;
-  const sql = data.sql_context;
-
-  document.getElementById('sql-query-display').textContent = sql.query_executed;
-  document.getElementById('retrieval-time-badge').textContent = `${sql.retrieval_time_ms}ms`;
-  document.getElementById('precedent-count').textContent = sql.historical_records_retrieved;
-
-  document.getElementById('card-problem-title').textContent = data.title;
-  document.getElementById('card-category-badge').textContent = `${data.category} • ${data.severity}`;
-  document.getElementById('confidence-text').textContent = ai.confidence_percentage;
-  document.getElementById('card-root-cause').textContent = ai.root_cause;
-  document.getElementById('card-primary-solution').textContent = ai.primary_solution;
-
-  const stepsContainer = document.getElementById('card-action-steps');
-  stepsContainer.innerHTML = '';
-  const rawSteps = ai.action_steps ? ai.action_steps.split('\n') : [];
-  rawSteps.forEach(step => {
-    if (step.trim()) {
-      const div = document.createElement('div');
-      div.className = 'flex items-start space-x-1.5 text-zinc-300';
-      div.innerHTML = `<i class="fa-solid fa-angle-right text-zinc-500 text-[10px] mt-1"></i> <span>${step.trim()}</span>`;
-      stepsContainer.appendChild(div);
-    }
-  });
-
-  document.getElementById('ai-active-card').classList.remove('hidden');
-  document.getElementById('btn-accept-ai').disabled = false;
-  document.getElementById('custom-solution-box').classList.add('hidden');
-}
-
-// DECISION ACTIONS
-function setupDecisionActions() {
-  document.getElementById('btn-accept-ai').addEventListener('click', async () => {
-    if (!currentProblemId || !currentAnalysis) return;
-    const ai = currentAnalysis.ai_recommendation;
-
-    const payload = {
-      solution_text: ai.primary_solution,
-      source: 'AI',
-      confidence_score: ai.confidence_score,
-      root_cause: ai.root_cause,
-      action_steps: ai.action_steps
-    };
-
-    try {
-      const res = await fetch(`${API_BASE}/api/problems/${currentProblemId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      const result = await res.json();
-      document.getElementById('ingestion-success-banner').classList.remove('hidden');
-      document.getElementById('btn-accept-ai').disabled = true;
-      refreshStatsAndData();
-    } catch (err) {
-      alert('Error updating solution: ' + err.message);
-    }
-  });
-
-  document.getElementById('btn-custom-solution').addEventListener('click', () => {
-    document.getElementById('custom-solution-box').classList.toggle('hidden');
-  });
-
-  document.getElementById('btn-cancel-custom').addEventListener('click', () => {
-    document.getElementById('custom-solution-box').classList.add('hidden');
-  });
-
-  document.getElementById('btn-save-custom').addEventListener('click', async () => {
-    if (!currentProblemId) return;
-    const customText = document.getElementById('input-custom-solution').value.trim();
-    if (!customText) {
-      alert('Please enter solution details.');
-      return;
-    }
-
-    const payload = {
-      solution_text: customText,
-      source: 'Human',
-      confidence_score: 1.0,
-      root_cause: 'Human validated solution.',
-      action_steps: 'Custom verified remediation.'
-    };
-
-    try {
-      await fetch(`${API_BASE}/api/problems/${currentProblemId}/resolve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-      document.getElementById('custom-solution-box').classList.add('hidden');
-      document.getElementById('ingestion-success-banner').classList.remove('hidden');
-      document.getElementById('btn-accept-ai').disabled = true;
-      refreshStatsAndData();
-    } catch (err) {
-      alert('Error saving custom solution: ' + err.message);
-    }
-  });
-}
-
-// DATABASE EXPLORER
-function setupDatabaseExplorer() {
-  const switchBtns = document.querySelectorAll('.table-switch-btn');
-  switchBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchBtns.forEach(b => {
-        b.classList.remove('active', 'bg-white', 'text-black', 'font-semibold');
-        b.classList.add('bg-zinc-900', 'text-zinc-400');
-      });
-      btn.classList.add('active', 'bg-white', 'text-black', 'font-semibold');
-      btn.classList.remove('bg-zinc-900', 'text-zinc-400');
-      loadExplorerTables(btn.getAttribute('data-table'));
-    });
-  });
-
-  const sqlPresets = document.querySelectorAll('.sql-preset');
-  sqlPresets.forEach(preset => {
-    preset.addEventListener('click', () => {
-      document.getElementById('sql-console-input').value = preset.getAttribute('data-query');
-      executeConsoleSql();
-    });
-  });
-
-  document.getElementById('btn-run-sql').addEventListener('click', executeConsoleSql);
-}
-
-async function executeConsoleSql() {
-  const query = document.getElementById('sql-console-input').value.trim();
-  if (!query) return;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/explorer/query`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sql_query: query })
-    });
-    const result = await res.json();
-
-    const thead = document.getElementById('sql-thead');
-    const tbody = document.getElementById('sql-tbody');
-    const container = document.getElementById('sql-query-results');
-
-    if (result.error) {
-      alert('SQL Error: ' + result.error);
-      return;
-    }
-
-    container.classList.remove('hidden');
-    thead.innerHTML = '';
-    tbody.innerHTML = '';
-
-    const trHead = document.createElement('tr');
-    result.columns.forEach(col => {
-      const th = document.createElement('th');
-      th.className = 'px-3 py-2 text-[11px] font-mono text-zinc-400';
-      th.textContent = col;
-      trHead.appendChild(th);
-    });
-    thead.appendChild(trHead);
-
-    result.rows.forEach(row => {
-      const tr = document.createElement('tr');
-      tr.className = 'hover:bg-zinc-900/60';
-      result.columns.forEach(col => {
-        const td = document.createElement('td');
-        td.className = 'px-3 py-1.5 text-zinc-300 border-t border-zinc-900 text-[11px] font-mono';
-        td.textContent = row[col] !== null ? row[col] : 'NULL';
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-  } catch (err) {
-    alert('Query failed: ' + err.message);
-  }
-}
-
-async function loadExplorerTables(tableName) {
-  try {
-    const res = await fetch(`${API_BASE}/api/explorer/tables`);
-    const data = await res.json();
-
-    const thead = document.getElementById('raw-thead');
-    const tbody = document.getElementById('raw-tbody');
-    thead.innerHTML = '';
-    tbody.innerHTML = '';
-
-    const rows = data[tableName] || [];
-    if (rows.length === 0) {
-      tbody.innerHTML = `<tr><td class="p-4 text-center text-zinc-500" colspan="8">No rows in table ${tableName}.</td></tr>`;
-      return;
-    }
-
-    const columns = Object.keys(rows[0]);
-    const trHead = document.createElement('tr');
-    columns.forEach(col => {
-      const th = document.createElement('th');
-      th.className = 'px-3 py-2 text-[11px] font-mono text-zinc-400';
-      th.textContent = col;
-      trHead.appendChild(th);
-    });
-    thead.appendChild(trHead);
-
-    rows.forEach(row => {
-      const tr = document.createElement('tr');
-      tr.className = 'hover:bg-zinc-900/60';
-      columns.forEach(col => {
-        const td = document.createElement('td');
-        td.className = 'px-3 py-1.5 text-zinc-300 border-t border-zinc-900 font-mono text-[11px]';
-        let val = row[col];
-        if (col === 'status') {
-          td.innerHTML = val === 'RESOLVED' ? `<span class="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-800 text-[10px]">RESOLVED</span>` : `<span class="px-1.5 py-0.5 rounded bg-amber-950 text-amber-400 border border-amber-800 text-[10px]">OPEN</span>`;
-        } else if (col === 'source') {
-          td.innerHTML = `<span class="px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-300 border border-zinc-800 text-[10px]">${val}</span>`;
-        } else if (col === 'problem_id') {
-          td.innerHTML = `<span class="text-blue-400 font-bold">#${val}</span>`;
-        } else {
-          td.textContent = (typeof val === 'string' && val.length > 70) ? val.slice(0, 70) + '...' : val;
-        }
-        tr.appendChild(td);
-      });
-      tbody.appendChild(tr);
-    });
-  } catch (err) {
-    console.error('Table load error:', err);
-  }
-}
-
-// KNOWLEDGE BASE
-function setupKnowledgeBase() {
-  document.getElementById('kb-search-input').addEventListener('input', renderKnowledgeBase);
-  document.getElementById('kb-category-filter').addEventListener('change', renderKnowledgeBase);
-}
-
-async function renderKnowledgeBase() {
-  const container = document.getElementById('kb-cards-grid');
-  const search = document.getElementById('kb-search-input').value.toLowerCase();
-  const categoryFilter = document.getElementById('kb-category-filter').value;
-
-  try {
-    const res = await fetch(`${API_BASE}/api/problems`);
-    const problems = await res.json();
-
-    container.innerHTML = '';
-    const filtered = problems.filter(p => {
-      const matchSearch = p.title.toLowerCase().includes(search) || p.description.toLowerCase().includes(search);
-      const matchCat = !categoryFilter || p.category === categoryFilter;
-      return matchSearch && matchCat;
-    });
-
-    if (filtered.length === 0) {
-      container.innerHTML = '<div class="col-span-2 p-6 text-center text-zinc-500 bg-zinc-950 rounded-lg border border-zinc-800">No matching records.</div>';
-      return;
-    }
-
-    filtered.forEach(p => {
-      const card = document.createElement('div');
-      card.className = 'bg-zinc-950 border border-zinc-800 rounded-lg p-3 space-y-2';
-      card.innerHTML = `
-        <div class="flex items-start justify-between gap-2">
-          <div>
-            <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800">${p.category}</span>
-            <h4 class="text-xs font-bold text-white mt-1">#${p.id} - ${p.title}</h4>
-          </div>
-          <span class="text-[10px] px-1.5 py-0.5 rounded ${p.status === 'RESOLVED' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-amber-950 text-amber-400 border border-amber-800'}">
-            ${p.status}
-          </span>
-        </div>
-        <p class="text-xs text-zinc-300 line-clamp-2">${p.description}</p>
-      `;
-      container.appendChild(card);
-    });
-  } catch (err) {
-    console.error('KB load error:', err);
-  }
-}
-
-// STATS
-async function refreshStatsAndData() {
-  try {
-    const res = await fetch(`${API_BASE}/api/stats`);
-    const stats = await res.json();
-
-    document.getElementById('stat-total').textContent = stats.total_problems;
-    document.getElementById('stat-resolved').textContent = stats.resolved_problems;
-    document.getElementById('stat-rate').textContent = `${stats.resolution_rate}%`;
-  } catch (err) {
-    console.error('Stats error:', err);
-  }
-}
-
-// RESET SEED
-function setupResetSeed() {
-  document.getElementById('btn-reset-seed').addEventListener('click', async () => {
-    if (confirm('Reset database to clean demo data?')) {
-      try {
-        const res = await fetch(`${API_BASE}/api/reset-seed`, { method: 'POST' });
-        const result = await res.json();
-        alert(result.message);
-        refreshStatsAndData();
-        loadExplorerTables('problems');
-        renderKnowledgeBase();
-      } catch (err) {
-        alert('Reset failed: ' + err.message);
-      }
-    }
-  });
-}
-
-
-// Real-time Debounced AI Auto-Classifier on Problem Title
+// 5. Real-Time AI Auto-Classifier on Problem Title
 let autoClassifyTimer = null;
 function setupAutoClassifier() {
   const titleInput = document.getElementById('input-title');
@@ -441,7 +242,6 @@ function setupAutoClassifier() {
         });
         const inferred = await res.json();
         
-        // Auto-fill fields
         const catSelect = document.getElementById('input-category');
         const sevSelect = document.getElementById('input-severity');
         const keyInput = document.getElementById('input-keywords');
@@ -463,14 +263,499 @@ function setupAutoClassifier() {
       } catch (err) {
         console.error('Auto-classify error:', err);
       }
-    }, 200);
+    }, 250);
   });
 
-  // Track if user manually edits keywords or description
-  document.getElementById('input-keywords').addEventListener('input', (e) => {
+  document.getElementById('input-keywords')?.addEventListener('input', (e) => {
     e.target.dataset.auto = 'false';
   });
-  document.getElementById('input-description').addEventListener('input', (e) => {
+  document.getElementById('input-description')?.addEventListener('input', (e) => {
     e.target.dataset.auto = 'false';
+  });
+}
+
+// 6. Problem Submission & Real-Time AI Analysis
+function setupFormHandler() {
+  const form = document.getElementById('problem-form');
+  const btn = document.getElementById('btn-submit-problem');
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Logging & Retrieving SQL Context...</span>';
+
+    const reportedByStr = `${activeUser.full_name} (${activeUser.role})`;
+
+    const problemPayload = {
+      title: document.getElementById('input-title').value.trim(),
+      category: document.getElementById('input-category').value,
+      severity: document.getElementById('input-severity').value,
+      keywords: document.getElementById('input-keywords').value.trim(),
+      description: document.getElementById('input-description').value.trim(),
+      reported_by: reportedByStr
+    };
+
+    try {
+      // Step A: Insert into problems table
+      const createRes = await fetch(`${API_BASE}/api/problems`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(problemPayload)
+      });
+      const createdProb = await createRes.json();
+      currentActiveProblemId = createdProb.id;
+
+      // Step B: Run AI Analysis
+      btn.innerHTML = '<i class="fa-solid fa-brain fa-fade"></i><span>AI Reasoning over Database Records...</span>';
+
+      const analyzeRes = await fetch(`${API_BASE}/api/problems/${currentActiveProblemId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const analysisData = await analyzeRes.json();
+      currentAIAnalysis = analysisData;
+
+      // Render output
+      renderAIAnalysis(analysisData);
+      await refreshStats();
+    } catch (err) {
+      alert(`Error running incident analysis: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-bolt"></i><span>Log to Database & Analyze</span>';
+    }
+  });
+}
+
+// 7. Render AI Analysis Card & SQL Context
+function renderAIAnalysis(data) {
+  document.getElementById('ai-placeholder').classList.add('hidden');
+  const container = document.getElementById('ai-output-container');
+  container.classList.remove('hidden');
+
+  // SQL Context Box
+  const sqlBox = document.getElementById('sql-query-display');
+  const sqlExecTime = document.getElementById('sql-exec-time');
+  const sqlMatchCount = document.getElementById('sql-match-count');
+
+  if (sqlBox) sqlBox.textContent = data.sql_context.query_executed || 'SELECT * FROM problems JOIN solutions ...';
+  if (sqlExecTime) sqlExecTime.textContent = `${data.sql_context.retrieval_time_ms} ms`;
+  if (sqlMatchCount) sqlMatchCount.textContent = `${data.sql_context.historical_records_retrieved} precedents matched`;
+
+  // AI Recommendation
+  const rec = data.ai_recommendation;
+  const titleEl = document.getElementById('ai-output-title');
+  const modelBadgeEl = document.getElementById('ai-model-badge');
+  const engineLatencyEl = document.getElementById('ai-engine-latency');
+  const confEl = document.getElementById('ai-confidence-score');
+  const rootCauseEl = document.getElementById('ai-root-cause');
+  const primarySolEl = document.getElementById('ai-primary-solution');
+  const actionStepsEl = document.getElementById('ai-action-steps');
+  const precedentsContainer = document.getElementById('ai-precedents-list');
+  const altList = document.getElementById('ai-alternatives-list');
+
+  if (titleEl) titleEl.textContent = `Incident #${data.problem_id}: ${data.title}`;
+  if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Gemini 3.8 Flash';
+  if (engineLatencyEl) engineLatencyEl.textContent = `Total Engine: ${data.sql_context.total_engine_time_ms}ms`;
+  if (confEl) confEl.textContent = rec.confidence_percentage || `${Math.round(rec.confidence_score * 100)}%`;
+
+  if (rootCauseEl) rootCauseEl.textContent = rec.root_cause;
+  if (primarySolEl) primarySolEl.textContent = rec.primary_solution;
+  if (actionStepsEl) actionStepsEl.textContent = rec.action_steps;
+
+  // Precedents
+  if (precedentsContainer) {
+    if (rec.precedents_used && rec.precedents_used.length > 0) {
+      precedentsContainer.innerHTML = rec.precedents_used.map(p => `
+        <span class="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 text-[11px] font-mono flex items-center gap-1">
+          <i class="fa-solid fa-link text-blue-400 text-[9px]"></i>
+          Incident #${p.problem_id}: ${p.title || 'Historical Incident'}
+        </span>
+      `).join('');
+    } else {
+      precedentsContainer.innerHTML = '<span class="text-zinc-500 text-[11px]">Novel incident: No direct prior match found in database.</span>';
+    }
+  }
+
+  // Alternatives
+  if (altList) {
+    if (rec.alternative_solutions && rec.alternative_solutions.length > 0) {
+      altList.innerHTML = rec.alternative_solutions.map(a => `
+        <li class="flex items-start gap-1.5"><i class="fa-solid fa-chevron-right text-[9px] text-zinc-600 mt-1"></i><span>${a}</span></li>
+      `).join('');
+    } else {
+      altList.innerHTML = '<li class="text-zinc-500">Standard single-track remediation.</li>';
+    }
+  }
+
+  // Update Operator resolving display
+  const resOpEl = document.getElementById('resolve-operator-display');
+  if (resOpEl) resOpEl.textContent = `${activeUser.full_name} (${activeUser.role})`;
+}
+
+// 8. Accept Solution & Close the Loop in SQL
+function setupAcceptSolutionHandler() {
+  const btn = document.getElementById('btn-accept-solution');
+  btn.addEventListener('click', async () => {
+    if (!currentActiveProblemId || !currentAIAnalysis) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Ingesting into Database...</span>';
+
+    const rec = currentAIAnalysis.ai_recommendation;
+    const resolvedByStr = `${activeUser.full_name} (${activeUser.role})`;
+
+    const solutionPayload = {
+      solution_text: rec.primary_solution,
+      source: rec.model_used && rec.model_used.includes('Gemini') ? 'AI (Gemini)' : 'AI',
+      resolved_by: resolvedByStr,
+      confidence_score: rec.confidence_score,
+      root_cause: rec.root_cause,
+      action_steps: rec.action_steps
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/api/problems/${currentActiveProblemId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(solutionPayload)
+      });
+      const result = await res.json();
+
+      btn.className = 'w-full sm:w-auto bg-zinc-800 text-emerald-400 font-bold px-5 py-2.5 rounded-lg text-xs flex items-center justify-center space-x-2 border border-emerald-500/50';
+      btn.innerHTML = '<i class="fa-solid fa-check-double"></i><span>Resolved & Stored in SQL Database!</span>';
+
+      await refreshStats();
+      
+      // Notify user
+      setTimeout(() => {
+        alert(`Success! Incident #${currentActiveProblemId} has been resolved by ${resolvedByStr} and inserted into the solutions table.`);
+      }, 300);
+    } catch (err) {
+      alert(`Failed to accept solution: ${err.message}`);
+      btn.disabled = false;
+      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i><span>Accept Solution & Update Database (SQL)</span>';
+    }
+  });
+}
+
+// 9. Database Explorer & SQL Console
+function setupDatabaseExplorer() {
+  const subtabs = document.querySelectorAll('.table-subtab');
+  const panes = document.querySelectorAll('.table-pane');
+
+  subtabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      subtabs.forEach(t => {
+        t.className = 'table-subtab px-2.5 py-1 rounded font-medium text-zinc-400 hover:text-white transition cursor-pointer';
+      });
+      tab.className = 'table-subtab px-2.5 py-1 rounded font-medium bg-white text-black transition cursor-pointer';
+
+      panes.forEach(p => p.classList.add('hidden'));
+      const target = document.getElementById(tab.dataset.subtab);
+      if (target) target.classList.remove('hidden');
+    });
+  });
+
+  // Presets in Explorer
+  document.querySelectorAll('.sql-preset-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.getElementById('sql-console-input').value = btn.dataset.sql;
+      executeSQLConsole();
+    });
+  });
+
+  // Execute Button
+  document.getElementById('btn-execute-sql').addEventListener('click', executeSQLConsole);
+}
+
+async function executeSQLConsole() {
+  const sql = document.getElementById('sql-console-input').value.trim();
+  const resContainer = document.getElementById('sql-custom-result');
+  const thead = document.getElementById('custom-table-head');
+  const tbody = document.getElementById('custom-table-body');
+
+  try {
+    const res = await fetch(`${API_BASE}/api/explorer/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sql_query: sql })
+    });
+    const data = await res.json();
+
+    if (data.error) {
+      alert(`SQL Error: ${data.error}`);
+      return;
+    }
+
+    resContainer.classList.remove('hidden');
+    thead.innerHTML = `<tr>${data.columns.map(c => `<th class="p-2 border-b border-zinc-800">${c}</th>`).join('')}</tr>`;
+    tbody.innerHTML = data.rows.map(r => `
+      <tr>${data.columns.map(c => `<td class="p-2 border-b border-zinc-900">${r[c] !== null ? r[c] : '<span class="text-zinc-600">NULL</span>'}</td>`).join('')}</tr>
+    `).join('');
+  } catch (err) {
+    alert(`Execution failed: ${err.message}`);
+  }
+}
+
+async function loadDatabaseTables() {
+  try {
+    const res = await fetch(`${API_BASE}/api/explorer/tables`);
+    const data = await res.json();
+
+    // 1. Problems Table
+    const tbodyProb = document.getElementById('tbody-problems');
+    if (tbodyProb) {
+      tbodyProb.innerHTML = data.problems.map(p => `
+        <tr class="hover:bg-zinc-900/50 transition">
+          <td class="p-2.5 font-bold text-white">${p.id}</td>
+          <td class="p-2.5 font-sans max-w-xs truncate">${p.title}</td>
+          <td class="p-2.5"><span class="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 text-[10px]">${p.category}</span></td>
+          <td class="p-2.5"><span class="text-[10px] ${p.severity === 'Critical' ? 'text-red-400 font-bold' : p.severity === 'High' ? 'text-amber-400' : 'text-zinc-400'}">${p.severity}</span></td>
+          <td class="p-2.5 text-zinc-300 text-[10px] font-sans">${p.reported_by || 'Akshay Kumar'}</td>
+          <td class="p-2.5"><span class="px-1.5 py-0.5 rounded text-[10px] ${p.status === 'RESOLVED' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-amber-950 text-amber-400 border border-amber-800'}">${p.status}</span></td>
+          <td class="p-2.5 text-zinc-400 text-[10px]">${p.created_at || '-'}</td>
+          <td class="p-2.5 text-zinc-400 text-[10px]">${p.resolved_at || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    // 2. Solutions Table
+    const tbodySol = document.getElementById('tbody-solutions');
+    if (tbodySol) {
+      tbodySol.innerHTML = data.solutions.map(s => `
+        <tr class="hover:bg-zinc-900/50 transition">
+          <td class="p-2.5 font-bold text-white">${s.id}</td>
+          <td class="p-2.5 text-blue-400 font-bold">#${s.problem_id}</td>
+          <td class="p-2.5 font-sans max-w-sm truncate">${s.solution_text}</td>
+          <td class="p-2.5 text-zinc-300 text-[10px] font-sans">${s.resolved_by || 'Akshay Kumar'}</td>
+          <td class="p-2.5"><span class="px-1.5 py-0.5 rounded text-[10px] ${s.source.includes('AI') ? 'bg-purple-950 text-purple-300 border border-purple-800' : 'bg-blue-950 text-blue-300 border border-blue-800'}">${s.source}</span></td>
+          <td class="p-2.5 font-bold text-emerald-400">${Math.round(s.confidence_score * 100)}%</td>
+          <td class="p-2.5 text-zinc-400 text-[10px]">${s.created_at || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    // 3. Users Table
+    const tbodyUsers = document.getElementById('tbody-users');
+    if (tbodyUsers) {
+      tbodyUsers.innerHTML = (data.users || []).map(u => `
+        <tr class="hover:bg-zinc-900/50 transition">
+          <td class="p-2.5 font-bold text-white">${u.id}</td>
+          <td class="p-2.5 font-mono text-zinc-400">@${u.username}</td>
+          <td class="p-2.5 font-sans font-medium text-white">${u.full_name}</td>
+          <td class="p-2.5"><span class="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-blue-300 text-[10px]">${u.role}</span></td>
+          <td class="p-2.5 text-zinc-400 text-[10px]">${u.created_at || '-'}</td>
+        </tr>
+      `).join('');
+    }
+
+    // 4. Logs Table
+    const tbodyLogs = document.getElementById('tbody-logs');
+    if (tbodyLogs) {
+      tbodyLogs.innerHTML = data.logs.map(l => `
+        <tr class="hover:bg-zinc-900/50 transition font-mono text-[10px]">
+          <td class="p-2.5 text-zinc-400">${l.id}</td>
+          <td class="p-2.5 font-bold ${l.query_type === 'RETRIEVAL' ? 'text-blue-400' : l.query_type === 'INSERT' ? 'text-emerald-400' : 'text-zinc-300'}">${l.query_type}</td>
+          <td class="p-2.5 text-zinc-300 max-w-md truncate">${l.query_text}</td>
+          <td class="p-2.5 text-zinc-400">${l.rows_affected}</td>
+          <td class="p-2.5 text-emerald-400 font-bold">${l.execution_time_ms} ms</td>
+          <td class="p-2.5 text-zinc-400">${l.timestamp}</td>
+        </tr>
+      `).join('');
+    }
+
+  } catch (err) {
+    console.error('Failed to load explorer tables:', err);
+  }
+}
+
+// 10. Knowledge Base Tab
+async function loadKnowledgeBase() {
+  try {
+    const res = await fetch(`${API_BASE}/api/problems?status=RESOLVED`);
+    const problems = await res.json();
+    renderKBCards(problems);
+  } catch (err) {
+    console.error('Failed to load knowledge base:', err);
+  }
+}
+
+function renderKBCards(problems) {
+  const container = document.getElementById('kb-cards-container');
+  if (!container) return;
+
+  if (problems.length === 0) {
+    container.innerHTML = '<div class="col-span-2 text-center text-zinc-500 py-10">No resolved incidents found.</div>';
+    return;
+  }
+
+  container.innerHTML = problems.map(p => `
+    <div class="p-4 rounded-xl bg-zinc-900/70 border border-zinc-800 space-y-2.5 hover:border-zinc-700 transition">
+      <div class="flex items-center justify-between">
+        <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">${p.category}</span>
+        <span class="text-[10px] font-mono text-zinc-400">Resolved at ${p.resolved_at || p.created_at}</span>
+      </div>
+      <h4 class="text-sm font-bold text-white">${p.title}</h4>
+      <p class="text-xs text-zinc-400 leading-relaxed">${p.description}</p>
+      
+      <div class="pt-2 border-t border-zinc-800 text-[11px] text-zinc-400 flex items-center justify-between">
+        <span>Reported by: <strong class="text-zinc-300">${p.reported_by || 'Engineer'}</strong></span>
+        <span class="text-emerald-400"><i class="fa-solid fa-circle-check mr-1"></i>Verified</span>
+      </div>
+    </div>
+  `).join('');
+}
+
+function setupKnowledgeBase() {
+  const search = document.getElementById('kb-search-input');
+  search?.addEventListener('input', async (e) => {
+    const q = e.target.value.toLowerCase().trim();
+    const res = await fetch(`${API_BASE}/api/problems?status=RESOLVED`);
+    const problems = await res.json();
+    const filtered = problems.filter(p => 
+      p.title.toLowerCase().includes(q) ||
+      p.description.toLowerCase().includes(q) ||
+      (p.keywords && p.keywords.toLowerCase().includes(q)) ||
+      (p.reported_by && p.reported_by.toLowerCase().includes(q))
+    );
+    renderKBCards(filtered);
+  });
+}
+
+// 11. Modals Management
+function setupModals() {
+  const modalUser = document.getElementById('modal-user');
+  const modalAI = document.getElementById('modal-ai');
+
+  // Open User Modal
+  document.getElementById('btn-user-modal')?.addEventListener('click', () => {
+    renderUserSelectionList();
+    modalUser.classList.remove('hidden');
+  });
+
+  document.getElementById('btn-switch-operator-inline')?.addEventListener('click', () => {
+    renderUserSelectionList();
+    modalUser.classList.remove('hidden');
+  });
+
+  document.getElementById('btn-close-user-modal')?.addEventListener('click', closeModals);
+
+  // Add new user
+  document.getElementById('btn-add-user')?.addEventListener('click', async () => {
+    const name = document.getElementById('new-user-fullname').value.trim();
+    const role = document.getElementById('new-user-role').value.trim();
+    if (!name || !role) {
+      alert('Please enter both Full Name and Role.');
+      return;
+    }
+    const uname = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+    try {
+      const res = await fetch(`${API_BASE}/api/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: uname, full_name: name, role: role })
+      });
+      const created = await res.json();
+      registeredUsers.push(created);
+      activeUser = created;
+      updateOperatorUI();
+      closeModals();
+      document.getElementById('new-user-fullname').value = '';
+      document.getElementById('new-user-role').value = '';
+    } catch (err) {
+      alert('Failed to add user: ' + err.message);
+    }
+  });
+
+  // Open AI Modal
+  document.getElementById('btn-ai-modal')?.addEventListener('click', async () => {
+    const res = await fetch(`${API_BASE}/api/system/status`);
+    const data = await res.json();
+    const ai = data.ai_engine;
+
+    const titleEl = document.getElementById('modal-ai-title');
+    const descEl = document.getElementById('modal-ai-desc');
+    const dotEl = document.getElementById('modal-ai-dot');
+
+    if (ai.configured) {
+      titleEl.textContent = 'Gemini 3.8 Flash Active';
+      descEl.textContent = `Using official google-genai SDK. Key: ${ai.masked_key}`;
+      dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
+    } else {
+      titleEl.textContent = 'Local Semantic RAG Mode';
+      descEl.textContent = 'Dynamic token and keyword matching over database records. Zero hardcoding.';
+      dotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
+    }
+
+    modalAI.classList.remove('hidden');
+  });
+
+  document.getElementById('btn-close-ai-modal')?.addEventListener('click', closeModals);
+
+  // Save Gemini Key
+  document.getElementById('btn-save-gemini-key')?.addEventListener('click', async () => {
+    const key = document.getElementById('input-gemini-key').value.trim();
+    if (!key) {
+      alert('Please paste a valid Google Gemini API Key.');
+      return;
+    }
+    try {
+      const res = await fetch(`${API_BASE}/api/system/api-key`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: key })
+      });
+      const data = await res.json();
+      alert('Gemini 3.8 Flash is now active!');
+      await checkAIStatus();
+      closeModals();
+    } catch (err) {
+      alert('Failed to activate API Key: ' + err.message);
+    }
+  });
+
+  // Close modals on backdrop click
+  [modalUser, modalAI].forEach(m => {
+    m?.addEventListener('click', (e) => {
+      if (e.target === m) closeModals();
+    });
+  });
+}
+
+function closeModals() {
+  document.getElementById('modal-user')?.classList.add('hidden');
+  document.getElementById('modal-ai')?.classList.add('hidden');
+}
+
+// 12. Refresh Top Header Stats
+async function refreshStats() {
+  try {
+    const res = await fetch(`${API_BASE}/api/stats`);
+    const data = await res.json();
+    document.getElementById('stat-total').textContent = data.total_problems;
+    document.getElementById('stat-resolved').textContent = data.resolved_problems;
+    document.getElementById('stat-rate').textContent = `${data.resolution_rate}%`;
+  } catch (err) {
+    console.error('Failed to refresh stats:', err);
+  }
+}
+
+// 13. Reset Database Button
+function setupResetButton() {
+  const btn = document.getElementById('btn-reset-seed');
+  btn?.addEventListener('click', async () => {
+    if (!confirm('Reset database to clean benchmark seed records?')) return;
+    try {
+      await fetch(`${API_BASE}/api/reset-seed`, { method: 'POST' });
+      await loadUsers();
+      await refreshStats();
+      document.getElementById('ai-output-container')?.classList.add('hidden');
+      document.getElementById('ai-placeholder')?.classList.remove('hidden');
+      alert('Database successfully reset to initial benchmark state.');
+    } catch (err) {
+      alert('Reset failed: ' + err.message);
+    }
   });
 }
