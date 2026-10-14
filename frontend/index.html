@@ -55,12 +55,12 @@
 
         <!-- AI Engine Status & Settings Button -->
         <button id="btn-ai-modal" class="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded-lg px-2.5 py-1.5 flex items-center space-x-2 transition cursor-pointer text-zinc-200">
-          <span id="ai-status-dot" class="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+          <span id="ai-status-dot" class="w-2 h-2 rounded-full bg-amber-400"></span>
           <div class="text-left leading-none">
             <div class="text-[11px] font-semibold text-white flex items-center gap-1">
-              <span id="header-ai-model">Local Semantic RAG</span>
+              <span id="header-ai-model">AI Engine: Offline</span>
             </div>
-            <div class="text-[9px] text-zinc-400" id="header-ai-provider">Click to configure Gemini</div>
+            <div class="text-[9px] text-zinc-400" id="header-ai-provider">Click to configure Gemini API Key</div>
           </div>
           <i class="fa-solid fa-gear text-[10px] text-zinc-400 ml-1"></i>
         </button>
@@ -283,10 +283,10 @@
                 <div>
                   <div class="flex items-center space-x-2">
                     <span id="ai-model-badge" class="text-[10px] font-mono px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">
-                      Gemini 3.8 Flash
+                      Google Gemini
                     </span>
                     <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800" id="ai-engine-latency">
-                      Engine: 1.2s
+                      Engine: 0ms
                     </span>
                   </div>
                   <h3 class="text-sm font-bold text-white mt-1" id="ai-output-title">Incident Analysis</h3>
@@ -294,9 +294,20 @@
 
                 <!-- Confidence Badge -->
                 <div class="text-right">
-                  <div class="text-lg font-extrabold text-emerald-400 leading-none" id="ai-confidence-score">96%</div>
-                  <div class="text-[10px] text-zinc-400">Evidence Confidence</div>
+                  <div class="text-lg font-extrabold text-emerald-400 leading-none" id="ai-confidence-score">--</div>
+                  <div class="text-[10px] text-zinc-400" id="ai-confidence-label">Model Confidence</div>
                 </div>
+              </div>
+
+              <!-- AI Offline Warning Banner (Shown only when AI is unavailable) -->
+              <div id="ai-offline-banner" class="hidden p-3.5 rounded-lg bg-amber-950/40 border border-amber-800/80 text-amber-200 text-xs space-y-1">
+                <div class="font-bold flex items-center gap-2">
+                  <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+                  <span>AI Engine Unavailable / Key Not Configured</span>
+                </div>
+                <p class="text-[11px] text-amber-300/80 leading-relaxed" id="ai-offline-message">
+                  Gemini API key is not configured. Historical SQL database retrieval succeeded above. You can formulate and ingest a manual resolution below to update organizational knowledge.
+                </p>
               </div>
 
               <!-- Cited Historical Precedents -->
@@ -310,23 +321,30 @@
               </div>
 
               <!-- Root Cause Diagnosis -->
-              <div class="bg-zinc-900/60 rounded-lg p-3.5 border border-zinc-800/80 space-y-1">
-                <h5 class="text-xs font-bold text-zinc-300 flex items-center">
-                  <i class="fa-solid fa-magnifying-glass mr-1.5 text-zinc-400"></i>Root Cause Diagnosis
-                </h5>
+              <div class="bg-zinc-900/60 rounded-lg p-3.5 border border-zinc-800/80 space-y-1.5">
+                <div class="flex items-center justify-between">
+                  <h5 class="text-xs font-bold text-zinc-300 flex items-center">
+                    <i class="fa-solid fa-magnifying-glass mr-1.5 text-zinc-400"></i>Root Cause Diagnosis
+                  </h5>
+                  <button type="button" id="btn-edit-resolution" class="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 cursor-pointer">
+                    <i class="fa-solid fa-pen-to-square"></i><span>Edit</span>
+                  </button>
+                </div>
                 <p id="ai-root-cause" class="text-xs text-zinc-300 leading-relaxed">
                   Analyzing underlying failure mechanism...
                 </p>
+                <textarea id="edit-root-cause" class="hidden w-full bg-black border border-zinc-700 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-white font-sans" rows="2"></textarea>
               </div>
 
               <!-- Recommended Primary Fix -->
-              <div class="bg-zinc-900/60 rounded-lg p-3.5 border border-zinc-800/80 space-y-1">
+              <div class="bg-zinc-900/60 rounded-lg p-3.5 border border-zinc-800/80 space-y-1.5">
                 <h5 class="text-xs font-bold text-zinc-300 flex items-center">
-                  <i class="fa-solid fa-check-circle mr-1.5 text-emerald-400"></i>Recommended Primary Solution
+                  <i class="fa-solid fa-check-circle mr-1.5 text-emerald-400"></i>Primary Solution
                 </h5>
                 <p id="ai-primary-solution" class="text-xs text-zinc-200 font-medium leading-relaxed">
                   Synthesizing recommended fix...
                 </p>
+                <textarea id="edit-primary-solution" class="hidden w-full bg-black border border-zinc-700 rounded-lg p-2 text-xs text-white focus:outline-none focus:border-white font-sans" rows="3"></textarea>
               </div>
 
               <!-- Actionable Checklist -->
@@ -337,6 +355,7 @@
                 <div id="ai-action-steps" class="bg-black rounded-lg p-3 border border-zinc-800 text-xs text-zinc-300 font-mono space-y-1 whitespace-pre-line leading-relaxed">
                   1. Executing step...
                 </div>
+                <textarea id="edit-action-steps" class="hidden w-full bg-black border border-zinc-700 rounded-lg p-2 text-xs text-zinc-200 focus:outline-none focus:border-white font-mono" rows="3"></textarea>
               </div>
 
               <!-- Alternative Solutions -->
@@ -357,7 +376,7 @@
                 <button id="btn-accept-solution"
                         class="w-full sm:w-auto bg-emerald-500 hover:bg-emerald-400 text-black font-bold px-5 py-2.5 rounded-lg text-xs transition flex items-center justify-center space-x-2 cursor-pointer shadow-md">
                   <i class="fa-solid fa-circle-check"></i>
-                  <span>Accept Solution & Update Database (SQL)</span>
+                  <span id="accept-btn-text">Accept Solution & Update Database (SQL)</span>
                 </button>
               </div>
 

@@ -2,7 +2,7 @@
 IRIS (Intelligent Resolution Incident System)
 FastAPI Backend Server & REST API
 Features:
-- Dynamic Database-Augmented AI Engine (Gemini 3.8 Flash + Dynamic Semantic RAG)
+- Database-Augmented AI Engine (Google Gemini official SDK + FTS5 BM25 SQL Context)
 - User Authentication & Operator Ownership (reported_by, resolved_by)
 - Live SQL Audit & Execution Explorer
 """
@@ -184,9 +184,12 @@ def resolve_problem(problem_id: int, payload: SolutionResolve):
     if not prob:
         raise HTTPException(status_code=404, detail=f"Problem with ID {problem_id} not found.")
     
+    if not payload.solution_text or not payload.solution_text.strip():
+        raise HTTPException(status_code=400, detail="Solution text cannot be empty.")
+    
     result = database.insert_solution(
         problem_id=problem_id,
-        solution_text=payload.solution_text,
+        solution_text=payload.solution_text.strip(),
         source=payload.source or "Human",
         resolved_by=payload.resolved_by or "Akshay Kumar (Lead SRE)",
         confidence_score=payload.confidence_score or 1.0,

@@ -1,14 +1,14 @@
 """
 IRIS (Intelligent Resolution Incident System)
-True AI Resolution Engine (Gemini 3.8 Flash + Database-Augmented Generation)
-ZERO HARDCODED LOGIC: Pure dynamic SQL retrieval + Real LLM Context Synthesis
+AI Resolution Engine (Google Gemini Official SDK + Database-Augmented Generation)
+
+ZERO HARDCODED LOGIC: Pure dynamic SQL retrieval + Real LLM Context Synthesis.
+No silent fallbacks. No fake AI. No simulated responses.
 """
 
 import os
 import json
 import time
-import math
-import re
 from typing import Dict, Any, List, Optional
 from database import find_historical_solutions_by_sql, log_query
 
@@ -19,8 +19,10 @@ try:
 except ImportError:
     pass
 
-# Check for API keys
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+
 def get_gemini_api_key() -> Optional[str]:
+    """Retrieve Gemini API key from environment variables."""
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 def set_gemini_api_key(key: str) -> bool:
@@ -38,29 +40,28 @@ def set_gemini_api_key(key: str) -> bool:
         print(f"Failed to write .env: {e}")
         return True
 
-
 def get_ai_status() -> Dict[str, Any]:
-    """Returns the current active AI model and configuration."""
+    """Returns the current active AI model and configuration status."""
     api_key = get_gemini_api_key()
+    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     if api_key:
         masked = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
         return {
             "mode": "gemini",
-            "model": "gemini-3.8-flash",
+            "model": model,
             "provider": "Google Gemini (Official google-genai SDK)",
             "configured": True,
             "masked_key": masked,
-            "description": "Live Frontier LLM with Database-Augmented Generation"
+            "description": f"Connected to live {model} with Database-Augmented Generation (DAG)."
         }
     return {
-        "mode": "local_semantic",
-        "model": "Local Semantic RAG Engine",
-        "provider": "Database Relational Synthesis",
+        "mode": "unconfigured",
+        "model": None,
+        "provider": None,
         "configured": False,
         "masked_key": None,
-        "description": "Dynamic keyword & vector overlap over SQL database records. Add Gemini API Key for full ChatGPT-level reasoning."
+        "description": "Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY."
     }
-
 
 def analyze_incident_and_recommend(
     problem_id: int,
@@ -74,9 +75,10 @@ def analyze_incident_and_recommend(
 ) -> Dict[str, Any]:
     """
     Main AI Resolution Pipeline:
-    1. SQL Database Retrieval (1:N problems JOIN solutions).
-    2. Dynamic Context Synthesis via Google Gemini 3.8 Flash (or Dynamic Local RAG if no key).
-    3. Grounded citation of past database records.
+    1. SQL Database Retrieval (1:N problems JOIN solutions via FTS5 BM25 or relational query).
+    2. Dynamic Context Synthesis via Google Gemini (Official google-genai SDK).
+    3. Grounded citation of past database records or first-principles novel diagnosis.
+    4. Honest reporting: If AI key is missing or call fails, returns ai_available: False (NO fake responses).
     """
     t0 = time.time()
 
@@ -112,43 +114,57 @@ def analyze_incident_and_recommend(
                 "title": title,
                 "category": category,
                 "severity": severity,
+                "ai_available": True,
                 "ai_recommendation": ai_result,
                 "sql_context": {
                     "query_executed": sql_used,
+                    "search_strategy": retrieval_result.get("search_strategy", "SQL"),
                     "historical_records_retrieved": len(historical_matches),
                     "retrieval_time_ms": retrieval_time_ms,
                     "total_engine_time_ms": round(elapsed_ms, 2)
-                }
+                },
+                "historical_matches": historical_matches
             }
         except Exception as e:
-            print(f"Gemini LLM Call failed: {e}. Falling back to Dynamic Semantic RAG.")
+            elapsed_ms = (time.time() - t0) * 1000
+            print(f"Gemini LLM Call failed: {e}")
+            return {
+                "problem_id": problem_id,
+                "title": title,
+                "category": category,
+                "severity": severity,
+                "ai_available": False,
+                "ai_recommendation": None,
+                "error": f"AI Engine provider error: {str(e)}",
+                "sql_context": {
+                    "query_executed": sql_used,
+                    "search_strategy": retrieval_result.get("search_strategy", "SQL"),
+                    "historical_records_retrieved": len(historical_matches),
+                    "retrieval_time_ms": retrieval_time_ms,
+                    "total_engine_time_ms": round(elapsed_ms, 2)
+                },
+                "historical_matches": historical_matches
+            }
 
-    # Fallback: Dynamic Semantic RAG Engine (Zero hardcoding, pure statistical/text synthesis)
-    ai_result = _call_dynamic_semantic_rag(
-        problem_id=problem_id,
-        title=title,
-        description=description,
-        category=category,
-        severity=severity,
-        keywords=keywords,
-        historical_matches=historical_matches
-    )
-
+    # Honest unconfigured state: NO fake generation, NO simulated responses
     elapsed_ms = (time.time() - t0) * 1000
     return {
         "problem_id": problem_id,
         "title": title,
         "category": category,
         "severity": severity,
-        "ai_recommendation": ai_result,
+        "ai_available": False,
+        "ai_recommendation": None,
+        "error": "Gemini API key is not configured. Configure GEMINI_API_KEY in the top settings modal or in your environment to enable AI synthesis.",
         "sql_context": {
             "query_executed": sql_used,
+            "search_strategy": retrieval_result.get("search_strategy", "SQL"),
             "historical_records_retrieved": len(historical_matches),
             "retrieval_time_ms": retrieval_time_ms,
             "total_engine_time_ms": round(elapsed_ms, 2)
-        }
+        },
+        "historical_matches": historical_matches
     }
-
 
 def _call_gemini_llm(
     api_key: str,
@@ -159,12 +175,14 @@ def _call_gemini_llm(
     severity: str,
     keywords: str,
     reported_by: str,
-    historical_matches: List[Dict[str, Any]]
+    historical_matches: List[Dict[str, Any]],
+    model_name: Optional[str] = None
 ) -> Dict[str, Any]:
-    """Calls Google Gemini 3.8 Flash with structured database context."""
+    """Calls Google Gemini model via official google-genai SDK with structured database context."""
     from google import genai
     from google.genai import types
 
+    active_model = model_name or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
     client = genai.Client(api_key=api_key)
 
     # Format historical records for prompt
@@ -181,13 +199,20 @@ def _call_gemini_llm(
             "original_confidence": match.get("confidence_score")
         })
 
+    is_novel = len(formatted_precedents) == 0
+
     system_instruction = (
         "You are IRIS AI, the enterprise incident resolution intelligence system for high-scale database and software systems. "
-        "Your job is to analyze incoming incidents and generate high-precision technical root cause diagnoses, recommended primary solutions, "
-        "and action checklists. You MUST ground your reasoning on the provided historical organizational incidents retrieved from SQL. "
-        "If a past incident is directly relevant, cite it specifically as '[Incident #ID]' and build upon its validated resolution. "
-        "If no past incidents match or this is a novel failure mode, provide a state-of-the-art solution from first principles and lower the confidence score. "
-        "Return ONLY a valid JSON object matching the requested schema."
+        "Your role is to analyze production incidents and generate actionable, high-precision technical root cause diagnoses, "
+        "recommended solutions, and step-by-step action checklists. "
+        "CRITICAL INSTRUCTIONS: "
+        "1. Grounding: When historical precedents from the organizational database are provided, you MUST analyze and build upon them, "
+        "citing specific incident IDs (e.g. '[Incident #ID]') and explaining how their verified solutions apply to this incident. "
+        "2. Novel Incidents: If NO historical precedents match or the list is empty, state clearly that this is a novel failure mode "
+        "with no prior match in the organization's database, and diagnose the issue from first principles using your general systems engineering knowledge. "
+        "3. Confidence Score: Return an honest confidence score between 0.0 and 1.0 based on how directly the historical database precedents support the solution (for matched incidents) "
+        "or your certainty in the first-principles diagnosis (for novel incidents). Do not fabricate false certainty. "
+        "4. Output: You MUST return strictly valid JSON matching the requested schema."
     )
 
     prompt = f"""
@@ -200,26 +225,27 @@ NEW INCIDENT DETAILS:
 - Keywords: {keywords}
 - Reported By: {reported_by}
 
-HISTORICAL DATABASE PRECEDENTS RETRIEVED VIA SQL:
+HISTORICAL DATABASE PRECEDENTS RETRIEVED VIA SQL ({len(formatted_precedents)} records):
 {json.dumps(formatted_precedents, indent=2)}
 
 TASK:
-Analyze the new incident in the context of our organizational history. Produce a structured resolution plan in JSON format with exactly these fields:
+Analyze the new incident against the organizational history provided above. Produce a structured resolution plan in valid JSON format with exactly these fields:
 {{
-  "root_cause": "Clear, deep technical explanation of why this failure occurs.",
-  "primary_solution": "Direct, actionable primary fix citing historical incidents where applicable (e.g., 'Referenced from Incident #X'). Include exact SQL/commands/code if relevant.",
+  "root_cause": "Deep, technically precise explanation of why this failure occurs.",
+  "primary_solution": "Direct, actionable remediation citing historical incidents where applicable (e.g., 'Referenced from Incident #X'). Include exact configuration settings, SQL queries, or commands where relevant.",
   "action_steps": "Ordered step-by-step numbered checklist (1. ..., 2. ..., 3. ...).",
   "alternative_solutions": ["Alternative A: ...", "Alternative B: ..."],
-  "confidence_score": 0.95, // Float between 0.60 and 0.99 based on how strongly historical database records support this resolution
+  "confidence_score": 0.92,
   "precedents_used": [
-    {{ "problem_id": 1, "title": "...", "relevance": "Why this past incident was used" }}
+    {{ "problem_id": 1, "title": "...", "relevance": "Detailed explanation of why this precedent applies" }}
   ],
-  "reasoning_summary": "Short 1-2 sentence executive summary explaining how the database evidence informed the solution."
+  "reasoning_summary": "1-2 sentence executive summary explaining how the database evidence informed this solution (or why first principles were used if novel).",
+  "is_novel": {str(is_novel).lower()}
 }}
 """
 
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
+        model=active_model,
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=system_instruction,
@@ -231,126 +257,57 @@ Analyze the new incident in the context of our organizational history. Produce a
     raw_text = response.text.strip()
     data = json.loads(raw_text)
 
-    score = float(data.get("confidence_score", 0.92))
-    score = max(0.50, min(0.99, score))
+    # Validate and bound confidence score honestly from model
+    score = float(data.get("confidence_score", 0.85 if is_novel else 0.92))
+    score = max(0.10, min(0.99, score))
 
     return {
-        "primary_solution": data.get("primary_solution", ""),
-        "root_cause": data.get("root_cause", ""),
+        "primary_solution": data.get("primary_solution", "").strip(),
+        "root_cause": data.get("root_cause", "").strip(),
         "confidence_score": round(score, 2),
         "confidence_percentage": f"{int(score * 100)}%",
-        "action_steps": data.get("action_steps", ""),
+        "action_steps": data.get("action_steps", "").strip(),
         "alternative_solutions": data.get("alternative_solutions", []),
         "precedents_used": data.get("precedents_used", []),
         "historical_precedent_count": len(historical_matches),
-        "reasoning_summary": data.get("reasoning_summary", "Synthesized using Gemini 3.8 Flash grounded in organizational database records."),
-        "model_used": "Gemini 3.8 Flash (Live LLM)"
+        "reasoning_summary": data.get("reasoning_summary", "").strip(),
+        "model_used": f"Google Gemini ({active_model})",
+        "is_novel": bool(data.get("is_novel", is_novel))
     }
-
-
-def _call_dynamic_semantic_rag(
-    problem_id: int,
-    title: str,
-    description: str,
-    category: str,
-    severity: str,
-    keywords: str,
-    historical_matches: List[Dict[str, Any]]
-) -> Dict[str, Any]:
-    """
-    Dynamic Semantic RAG Engine:
-    Zero hardcoded strings. Dynamically extracts text patterns, computes token cosine similarity,
-    and synthesizes actionable steps from database precedents.
-    """
-    input_text = f"{title} {description} {keywords}".lower()
-    input_tokens = set(re.findall(r'[a-zA-Z0-9_-]{3,}', input_text))
-
-    best_match = None
-    highest_overlap = 0
-    precedents_used = []
-
-    for match in historical_matches:
-        match_text = f"{match.get('title', '')} {match.get('description', '')} {match.get('keywords', '')} {match.get('root_cause', '')}".lower()
-        match_tokens = set(re.findall(r'[a-zA-Z0-9_-]{3,}', match_text))
-        
-        overlap = len(input_tokens.intersection(match_tokens))
-        if overlap > highest_overlap:
-            highest_overlap = overlap
-            best_match = match
-
-    if best_match and highest_overlap > 0:
-        precedents_used.append({
-            "problem_id": best_match["problem_id"],
-            "title": best_match["title"],
-            "relevance": f"Matched on technical keywords (similarity score: {highest_overlap})"
-        })
-
-        base_conf = best_match.get("confidence_score", 0.94)
-        cat_bonus = 0.05 if best_match.get("category", "").lower() == category.lower() else 0.0
-        calculated_conf = min(0.98, max(0.85, base_conf + cat_bonus))
-
-        primary_solution = f"{best_match.get('solution_text', '')} (Grounded in Historical Incident #{best_match['problem_id']}: '{best_match.get('title')}')"
-        root_cause = best_match.get("root_cause", f"Underlying {category} infrastructure failure identified from past incidents.")
-        action_steps = best_match.get("action_steps", "1. Apply configuration patch.\n2. Verify system metrics.\n3. Ingest resolution into IRIS.")
-        alternatives = [
-            f"Alternative A: Scale {category} service horizontally during high peak workloads.",
-            f"Alternative B: Enable automated circuit-breaker fallback to maintain partial availability."
-        ]
-        reasoning = f"Relational database query matched {len(historical_matches)} historical incident(s). Recommending validated resolution from Incident #{best_match['problem_id']} with {int(calculated_conf*100)}% confidence."
-    else:
-        # Novel failure mode (No direct precedent in database)
-        calculated_conf = 0.78
-        primary_solution = f"Novel {category} Incident: Execute targeted diagnostic on '{title}', isolate affected service dependencies, and formulate verified fix to register in database."
-        root_cause = f"First-time anomaly observed in {category} subsystem without direct precedent in organizational knowledge store."
-        action_steps = (
-            f"1. Isolate the affected {category} service and inspect recent deployment / error logs.\n"
-            f"2. Reproduce the failure pattern in staging environment.\n"
-            f"3. Formulate and apply targeted configuration or code remediation.\n"
-            f"4. Click 'Accept Solution' to store this resolution as future organizational knowledge."
-        )
-        alternatives = [
-            "Alternative A: Temporarily route traffic away from failing node.",
-            "Alternative B: Roll back recent release if correlated with deployment timestamp."
-        ]
-        reasoning = "No historical incident in the database matched these exact symptoms. Baseline diagnostic workflow generated; accepting this fix will expand the organizational knowledge store."
-
-    return {
-        "primary_solution": primary_solution,
-        "root_cause": root_cause,
-        "confidence_score": round(calculated_conf, 2),
-        "confidence_percentage": f"{int(calculated_conf * 100)}%",
-        "action_steps": action_steps,
-        "alternative_solutions": alternatives,
-        "precedents_used": precedents_used,
-        "historical_precedent_count": len(historical_matches),
-        "reasoning_summary": reasoning,
-        "model_used": "Local Semantic RAG (Zero Hardcoding)"
-    }
-
 
 def classify_incident_title(title: str, custom_api_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Real-Time AI Auto-Classifier for Incident Title.
-    If Gemini API key is configured, asks Gemini to intelligently classify into Category, Severity, Keywords, and Description.
-    Otherwise uses dynamic token semantics.
+    If Gemini API key is configured, invokes Gemini to intelligently classify into Category, Severity, Keywords, and Description.
+    If Gemini is not configured, returns ai_available: False without faking results.
     """
     clean_title = (title or "").strip()
     if not clean_title or len(clean_title) < 3:
         return {
-            "category": "Performance",
-            "severity": "Medium",
+            "ai_available": False,
+            "category": None,
+            "severity": None,
             "keywords": "",
             "suggested_description": ""
         }
 
     api_key = (custom_api_key or "").strip() or get_gemini_api_key()
+    if not api_key:
+        return {
+            "ai_available": False,
+            "category": None,
+            "severity": None,
+            "keywords": "",
+            "suggested_description": "",
+            "message": "AI auto-classifier requires GEMINI_API_KEY."
+        }
 
-    if api_key:
-        try:
-            from google import genai
-            from google.genai import types
-            client = genai.Client(api_key=api_key)
-            prompt = f"""
+    active_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    try:
+        from google import genai
+        from google.genai import types
+        client = genai.Client(api_key=api_key)
+        prompt = f"""
 Classify this technical incident title into:
 - category: strictly one of ["Database", "Performance", "Authentication", "Network", "DevOps", "Security"]
 - severity: strictly one of ["Critical", "High", "Medium", "Low"]
@@ -367,54 +324,21 @@ Return ONLY JSON:
   "suggested_description": "..."
 }}
 """
-            res = client.models.generate_content(
-                model="gemini-3.8-flash",
-                contents=prompt,
-                config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
-            )
-            return json.loads(res.text)
-        except Exception as e:
-            print(f"Gemini classification error: {e}")
-
-    # Dynamic Semantic Fallback
-    text = clean_title.lower()
-    cat = "Performance"
-    sev = "Medium"
-    keywords = []
-
-    if any(w in text for w in ["login", "auth", "401", "403", "jwt", "token", "password", "sign in", "credential", "session", "user not able"]):
-        cat = "Authentication"
-        keywords = ["auth", "login", "credentials", "session", "security"]
-    elif any(w in text for w in ["postgres", "mysql", "sqlite", "database", "sql", "query", "index", "deadlock", "table", "pool", "db", "transaction"]):
-        cat = "Database"
-        keywords = ["database", "sql", "query", "transactions", "index"]
-    elif any(w in text for w in ["network", "timeout", "gateway", "502", "504", "cors", "dns", "socket", "unreachable", "payment", "http"]):
-        cat = "Network"
-        keywords = ["network", "timeout", "gateway", "connection", "api"]
-    elif any(w in text for w in ["docker", "kubernetes", "k8s", "pod", "container", "deployment", "crashloop", "port", "restart", "ci/cd"]):
-        cat = "DevOps"
-        keywords = ["devops", "container", "kubernetes", "docker", "deployment"]
-    else:
-        cat = "Performance"
-        keywords = ["performance", "latency", "optimization", "system"]
-
-    # Severity inference
-    if any(w in text for w in ["crash", "deadlock", "down", "critical", "exhaustion", "oom", "outage", "blocked"]):
-        sev = "Critical"
-    elif any(w in text for w in ["fail", "slow", "unable", "401", "403", "error", "leak", "latency", "timeout"]):
-        sev = "High"
-    elif any(w in text for w in ["minor", "deprecated", "notice", "delay"]):
-        sev = "Low"
-
-    # Add dynamic keywords from words
-    words = [re.sub(r'[^a-zA-Z0-9]', '', w) for w in text.split() if len(w) > 3 and w not in ["with", "from", "after", "this", "that", "user", "have", "been"]]
-    for w in words:
-        if w and w not in keywords:
-            keywords.append(w)
-
-    return {
-        "category": cat,
-        "severity": sev,
-        "keywords": ", ".join(keywords[:5]),
-        "suggested_description": f"Incident reported: {clean_title}. System monitoring and telemetry indicate failure under active production traffic."
-    }
+        res = client.models.generate_content(
+            model=active_model,
+            contents=prompt,
+            config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
+        )
+        parsed = json.loads(res.text)
+        parsed["ai_available"] = True
+        return parsed
+    except Exception as e:
+        print(f"Gemini classification error: {e}")
+        return {
+            "ai_available": False,
+            "category": None,
+            "severity": None,
+            "keywords": "",
+            "suggested_description": "",
+            "error": str(e)
+        }

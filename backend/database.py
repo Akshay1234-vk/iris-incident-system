@@ -98,11 +98,48 @@ def init_db():
     );
     """)
 
+    # 5. Full-Text Search (FTS5) for High-Precision Precedent Retrieval
+    cursor.execute("""
+    CREATE VIRTUAL TABLE IF NOT EXISTS problems_fts USING fts5(
+        title,
+        description,
+        keywords,
+        content='problems',
+        content_rowid='id'
+    );
+    """)
+
+    # Keep FTS5 in sync with problems table
+    cursor.execute("""
+    CREATE TRIGGER IF NOT EXISTS problems_ai AFTER INSERT ON problems BEGIN
+        INSERT INTO problems_fts(rowid, title, description, keywords) VALUES (new.id, new.title, new.description, new.keywords);
+    END;
+    """)
+    cursor.execute("""
+    CREATE TRIGGER IF NOT EXISTS problems_ad AFTER DELETE ON problems BEGIN
+        INSERT INTO problems_fts(problems_fts, rowid, title, description, keywords) VALUES('delete', old.id, old.title, old.description, old.keywords);
+    END;
+    """)
+    cursor.execute("""
+    CREATE TRIGGER IF NOT EXISTS problems_au AFTER UPDATE ON problems BEGIN
+        INSERT INTO problems_fts(problems_fts, rowid, title, description, keywords) VALUES('delete', old.id, old.title, old.description, old.keywords);
+        INSERT INTO problems_fts(rowid, title, description, keywords) VALUES (new.id, new.title, new.description, new.keywords);
+    END;
+    """)
+
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_problems_category ON problems(category);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_problems_status ON problems(status);")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_solutions_problem_id ON solutions(problem_id);")
 
     conn.commit()
+
+    # Rebuild FTS5 index to ensure existing records are indexed
+    try:
+        cursor.execute("INSERT INTO problems_fts(problems_fts) VALUES('rebuild');")
+        conn.commit()
+    except Exception as e:
+        print(f"FTS5 rebuild note: {e}")
+
     conn.close()
 
 def get_seed_users() -> List[Dict[str, Any]]:
@@ -257,6 +294,7 @@ def reset_to_seed():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("DROP TABLE IF EXISTS solutions;")
+    cursor.execute("DROP TABLE IF EXISTS problems_fts;")
     cursor.execute("DROP TABLE IF EXISTS problems;")
     cursor.execute("DROP TABLE IF EXISTS users;")
     cursor.execute("DROP TABLE IF EXISTS sql_query_logs;")
@@ -356,61 +394,121 @@ def get_all_problems(status: Optional[str] = None, category: Optional[str] = Non
     return rows
 
 def find_historical_solutions_by_sql(category: str, keywords: str, title: str) -> Dict[str, Any]:
+    """
+    Finds historical problem/solution pairs using real SQLite queries.
+    Prefers SQLite FTS5 with BM25 full-text ranking when searchable tokens exist;
+    falls back to parameterized SQL matching category and token wildcards.
+    """
     t0 = time.time()
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    tokens = [t.strip().lower() for t in (keywords + " " + title).replace(",", " ").split() if len(t.strip()) > 2]
-    tokens = list(dict.fromkeys(tokens))[:5]
+    # Extract clean alphanumeric tokens (length > 2)
+    raw_text = f"{keywords} {title}".replace(",", " ")
+    import re
+    tokens = [re.sub(r'[^a-zA-Z0-9_-]', '', t).lower() for t in raw_text.split() if len(t.strip()) > 2]
+    tokens = [t for t in dict.fromkeys(tokens) if t][:8]
     
-    sql = """
-    SELECT 
-        p.id AS problem_id,
-        p.title,
-        p.description,
-        p.category,
-        p.severity,
-        p.keywords,
-        p.reported_by,
-        s.id AS solution_id,
-        s.solution_text,
-        s.source,
-        s.resolved_by,
-        s.confidence_score,
-        s.root_cause,
-        s.action_steps,
-        s.created_at AS resolved_at
-    FROM problems p
-    JOIN solutions s ON p.id = s.problem_id
-    WHERE p.status = 'RESOLVED'
-      AND (
-          p.category = ?
-    """
-    params = [category]
-    
-    for token in tokens:
-        sql += " OR p.title LIKE ? OR p.description LIKE ? OR p.keywords LIKE ?"
-        wildcard = f"%{token}%"
-        params.extend([wildcard, wildcard, wildcard])
-        
-    sql += """)
-    ORDER BY 
-        CASE WHEN p.category = ? THEN 1 ELSE 2 END,
-        s.confidence_score DESC
-    LIMIT 5;
-    """
-    params.append(category)
-    
-    cursor.execute(sql, params)
-    rows = [dict(r) for r in cursor.fetchall()]
+    rows = []
+    sql_used = ""
+    params_used = []
+    search_strategy = "FTS5_BM25"
+
+    # Attempt 1: Full-Text Search via FTS5 BM25
+    if tokens:
+        fts_match_query = " OR ".join([f'"{t}"' for t in tokens])
+        fts_sql = """
+        SELECT 
+            p.id AS problem_id,
+            p.title,
+            p.description,
+            p.category,
+            p.severity,
+            p.keywords,
+            p.reported_by,
+            s.id AS solution_id,
+            s.solution_text,
+            s.source,
+            s.resolved_by,
+            s.confidence_score,
+            s.root_cause,
+            s.action_steps,
+            s.created_at AS resolved_at,
+            bm25(problems_fts) AS rank_score
+        FROM problems_fts
+        JOIN problems p ON problems_fts.rowid = p.id
+        JOIN solutions s ON p.id = s.problem_id
+        WHERE p.status = 'RESOLVED'
+          AND problems_fts MATCH ?
+        ORDER BY 
+            CASE WHEN p.category = ? THEN 1 ELSE 2 END,
+            rank_score ASC
+        LIMIT 5;
+        """
+        try:
+            cursor.execute(fts_sql, (fts_match_query, category))
+            fts_rows = [dict(r) for r in cursor.fetchall()]
+            if fts_rows:
+                rows = fts_rows
+                sql_used = fts_sql
+                params_used = [fts_match_query, category]
+        except Exception as e:
+            # If FTS syntax error occurs on weird tokens, gracefully fall back
+            print(f"FTS5 query note: {e}")
+
+    # Attempt 2: Fallback to Parameterized SQL Multi-Column Query
+    if not rows:
+        search_strategy = "PARAMETERIZED_SQL"
+        fallback_sql = """
+        SELECT 
+            p.id AS problem_id,
+            p.title,
+            p.description,
+            p.category,
+            p.severity,
+            p.keywords,
+            p.reported_by,
+            s.id AS solution_id,
+            s.solution_text,
+            s.source,
+            s.resolved_by,
+            s.confidence_score,
+            s.root_cause,
+            s.action_steps,
+            s.created_at AS resolved_at
+        FROM problems p
+        JOIN solutions s ON p.id = s.problem_id
+        WHERE p.status = 'RESOLVED'
+          AND (
+              p.category = ?
+        """
+        fallback_params = [category]
+        for token in tokens[:5]:
+            fallback_sql += " OR p.title LIKE ? OR p.description LIKE ? OR p.keywords LIKE ?"
+            wildcard = f"%{token}%"
+            fallback_params.extend([wildcard, wildcard, wildcard])
+            
+        fallback_sql += """)
+        ORDER BY 
+            CASE WHEN p.category = ? THEN 1 ELSE 2 END,
+            s.confidence_score DESC
+        LIMIT 5;
+        """
+        fallback_params.append(category)
+        cursor.execute(fallback_sql, fallback_params)
+        rows = [dict(r) for r in cursor.fetchall()]
+        sql_used = fallback_sql
+        params_used = fallback_params
+
     conn.close()
     
     elapsed = (time.time() - t0) * 1000
-    log_query("RETRIEVAL", sql, params, len(rows), elapsed)
+    log_query("RETRIEVAL", sql_used, params_used, len(rows), elapsed)
     
     return {
-        "sql_query": sql.strip(),
-        "parameters": params,
+        "sql_query": sql_used.strip(),
+        "parameters": params_used,
+        "search_strategy": search_strategy,
         "execution_time_ms": round(elapsed, 2),
         "historical_matches": rows
     }

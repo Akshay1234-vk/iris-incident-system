@@ -64,6 +64,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupPresets();
   setupAutoClassifier();
   setupFormHandler();
+  setupEditToggle();
   setupAcceptSolutionHandler();
   setupDatabaseExplorer();
   setupKnowledgeBase();
@@ -161,16 +162,16 @@ async function checkAIStatus() {
     const dotEl = document.getElementById('ai-status-dot');
 
     if (ai.configured && ai.mode === 'gemini') {
-      if (modelEl) modelEl.textContent = 'Gemini 3.8 Flash';
-      if (provEl) provEl.textContent = 'Live LLM Connected';
+      if (modelEl) modelEl.textContent = `Gemini (${ai.model || 'Connected'})`;
+      if (provEl) provEl.textContent = 'Live LLM Active';
       if (dotEl) {
         dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
       }
     } else {
-      if (modelEl) modelEl.textContent = 'Local Semantic RAG';
-      if (provEl) provEl.textContent = 'Click to configure Gemini';
+      if (modelEl) modelEl.textContent = 'AI Engine: Offline';
+      if (provEl) provEl.textContent = 'Click to configure Gemini API Key';
       if (dotEl) {
-        dotEl.className = 'w-2 h-2 rounded-full bg-amber-400 animate-pulse';
+        dotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
       }
     }
   } catch (err) {
@@ -248,18 +249,21 @@ function setupAutoClassifier() {
         const descInput = document.getElementById('input-description');
         const badge = document.getElementById('auto-inferred-badge');
 
-        if (inferred.category) catSelect.value = inferred.category;
-        if (inferred.severity) sevSelect.value = inferred.severity;
-        if (inferred.keywords && (!keyInput.value || keyInput.dataset.auto === 'true')) {
-          keyInput.value = inferred.keywords;
-          keyInput.dataset.auto = 'true';
+        if (inferred.ai_available) {
+          if (inferred.category) catSelect.value = inferred.category;
+          if (inferred.severity) sevSelect.value = inferred.severity;
+          if (inferred.keywords && (!keyInput.value || keyInput.dataset.auto === 'true')) {
+            keyInput.value = inferred.keywords;
+            keyInput.dataset.auto = 'true';
+          }
+          if (inferred.suggested_description && (!descInput.value || descInput.dataset.auto === 'true')) {
+            descInput.value = inferred.suggested_description;
+            descInput.dataset.auto = 'true';
+          }
+          badge?.classList.remove('hidden');
+        } else {
+          badge?.classList.add('hidden');
         }
-        if (inferred.suggested_description && (!descInput.value || descInput.dataset.auto === 'true')) {
-          descInput.value = inferred.suggested_description;
-          descInput.dataset.auto = 'true';
-        }
-
-        badge?.classList.remove('hidden');
       } catch (err) {
         console.error('Auto-classify error:', err);
       }
@@ -329,6 +333,48 @@ function setupFormHandler() {
 }
 
 // 7. Render AI Analysis Card & SQL Context
+let isEditMode = false;
+
+function setEditMode(enable) {
+  isEditMode = enable;
+  const pRoot = document.getElementById('ai-root-cause');
+  const tRoot = document.getElementById('edit-root-cause');
+  const pSol = document.getElementById('ai-primary-solution');
+  const tSol = document.getElementById('edit-primary-solution');
+  const pAct = document.getElementById('ai-action-steps');
+  const tAct = document.getElementById('edit-action-steps');
+  const editBtn = document.getElementById('btn-edit-resolution');
+
+  if (enable) {
+    pRoot?.classList.add('hidden');
+    tRoot?.classList.remove('hidden');
+    pSol?.classList.add('hidden');
+    tSol?.classList.remove('hidden');
+    pAct?.classList.add('hidden');
+    tAct?.classList.remove('hidden');
+    if (editBtn) editBtn.innerHTML = '<i class="fa-solid fa-eye mr-1"></i><span>Preview</span>';
+  } else {
+    if (pRoot && tRoot) pRoot.textContent = tRoot.value;
+    if (pSol && tSol) pSol.textContent = tSol.value;
+    if (pAct && tAct) pAct.textContent = tAct.value;
+
+    pRoot?.classList.remove('hidden');
+    tRoot?.classList.add('hidden');
+    pSol?.classList.remove('hidden');
+    tSol?.classList.add('hidden');
+    pAct?.classList.remove('hidden');
+    tAct?.classList.add('hidden');
+    if (editBtn) editBtn.innerHTML = '<i class="fa-solid fa-pen-to-square mr-1"></i><span>Edit</span>';
+  }
+}
+
+function setupEditToggle() {
+  const btn = document.getElementById('btn-edit-resolution');
+  btn?.addEventListener('click', () => {
+    setEditMode(!isEditMode);
+  });
+}
+
 function renderAIAnalysis(data) {
   document.getElementById('ai-placeholder').classList.add('hidden');
   const container = document.getElementById('ai-output-container');
@@ -339,35 +385,35 @@ function renderAIAnalysis(data) {
   const sqlExecTime = document.getElementById('sql-exec-time');
   const sqlMatchCount = document.getElementById('sql-match-count');
 
-  if (sqlBox) sqlBox.textContent = data.sql_context.query_executed || 'SELECT * FROM problems JOIN solutions ...';
-  if (sqlExecTime) sqlExecTime.textContent = `${data.sql_context.retrieval_time_ms} ms`;
-  if (sqlMatchCount) sqlMatchCount.textContent = `${data.sql_context.historical_records_retrieved} precedents matched`;
+  if (sqlBox) sqlBox.textContent = data.sql_context?.query_executed || 'SELECT * FROM problems JOIN solutions ...';
+  if (sqlExecTime) sqlExecTime.textContent = `${data.sql_context?.retrieval_time_ms || 0} ms`;
+  if (sqlMatchCount) sqlMatchCount.textContent = `${data.sql_context?.historical_records_retrieved || 0} precedents matched`;
 
-  // AI Recommendation
-  const rec = data.ai_recommendation;
   const titleEl = document.getElementById('ai-output-title');
   const modelBadgeEl = document.getElementById('ai-model-badge');
   const engineLatencyEl = document.getElementById('ai-engine-latency');
   const confEl = document.getElementById('ai-confidence-score');
+  const confLabelEl = document.getElementById('ai-confidence-label');
   const rootCauseEl = document.getElementById('ai-root-cause');
+  const editRootCauseEl = document.getElementById('edit-root-cause');
   const primarySolEl = document.getElementById('ai-primary-solution');
+  const editPrimarySolEl = document.getElementById('edit-primary-solution');
   const actionStepsEl = document.getElementById('ai-action-steps');
+  const editActionStepsEl = document.getElementById('edit-action-steps');
   const precedentsContainer = document.getElementById('ai-precedents-list');
   const altList = document.getElementById('ai-alternatives-list');
+  const offlineBanner = document.getElementById('ai-offline-banner');
+  const offlineMsg = document.getElementById('ai-offline-message');
+  const acceptBtnText = document.getElementById('accept-btn-text');
 
   if (titleEl) titleEl.textContent = `Incident #${data.problem_id}: ${data.title}`;
-  if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Gemini 3.8 Flash';
-  if (engineLatencyEl) engineLatencyEl.textContent = `Total Engine: ${data.sql_context.total_engine_time_ms}ms`;
-  if (confEl) confEl.textContent = rec.confidence_percentage || `${Math.round(rec.confidence_score * 100)}%`;
-
-  if (rootCauseEl) rootCauseEl.textContent = rec.root_cause;
-  if (primarySolEl) primarySolEl.textContent = rec.primary_solution;
-  if (actionStepsEl) actionStepsEl.textContent = rec.action_steps;
+  if (engineLatencyEl) engineLatencyEl.textContent = `Total Engine: ${data.sql_context?.total_engine_time_ms || 0}ms`;
 
   // Precedents
+  const historical = data.historical_matches || [];
   if (precedentsContainer) {
-    if (rec.precedents_used && rec.precedents_used.length > 0) {
-      precedentsContainer.innerHTML = rec.precedents_used.map(p => `
+    if (historical.length > 0) {
+      precedentsContainer.innerHTML = historical.map(p => `
         <span class="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-zinc-300 text-[11px] font-mono flex items-center gap-1">
           <i class="fa-solid fa-link text-blue-400 text-[9px]"></i>
           Incident #${p.problem_id}: ${p.title || 'Historical Incident'}
@@ -378,15 +424,64 @@ function renderAIAnalysis(data) {
     }
   }
 
-  // Alternatives
-  if (altList) {
-    if (rec.alternative_solutions && rec.alternative_solutions.length > 0) {
-      altList.innerHTML = rec.alternative_solutions.map(a => `
-        <li class="flex items-start gap-1.5"><i class="fa-solid fa-chevron-right text-[9px] text-zinc-600 mt-1"></i><span>${a}</span></li>
-      `).join('');
-    } else {
-      altList.innerHTML = '<li class="text-zinc-500">Standard single-track remediation.</li>';
+  // Handle AI Available vs Offline
+  if (data.ai_available && data.ai_recommendation) {
+    const rec = data.ai_recommendation;
+    offlineBanner?.classList.add('hidden');
+
+    if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Google Gemini';
+    if (confEl) confEl.textContent = rec.confidence_percentage || `${Math.round((rec.confidence_score || 0.9) * 100)}%`;
+    if (confLabelEl) confLabelEl.textContent = rec.is_novel ? 'First-Principles Confidence' : 'Evidence-Grounded Confidence';
+
+    if (rootCauseEl) rootCauseEl.textContent = rec.root_cause || '';
+    if (editRootCauseEl) editRootCauseEl.value = rec.root_cause || '';
+
+    if (primarySolEl) primarySolEl.textContent = rec.primary_solution || '';
+    if (editPrimarySolEl) editPrimarySolEl.value = rec.primary_solution || '';
+
+    if (actionStepsEl) actionStepsEl.textContent = rec.action_steps || '';
+    if (editActionStepsEl) editActionStepsEl.value = rec.action_steps || '';
+
+    if (altList) {
+      if (rec.alternative_solutions && rec.alternative_solutions.length > 0) {
+        altList.innerHTML = rec.alternative_solutions.map(a => `
+          <li class="flex items-start gap-1.5"><i class="fa-solid fa-chevron-right text-[9px] text-zinc-600 mt-1"></i><span>${a}</span></li>
+        `).join('');
+      } else {
+        altList.innerHTML = '<li class="text-zinc-500">Standard single-track remediation.</li>';
+      }
     }
+
+    if (acceptBtnText) acceptBtnText.textContent = 'Accept Solution & Update Database (SQL)';
+    setEditMode(false);
+  } else {
+    // AI is offline / unconfigured
+    offlineBanner?.classList.remove('hidden');
+    if (offlineMsg) offlineMsg.textContent = data.error || 'Gemini API key is not configured. Historical SQL database retrieval succeeded above. You can formulate and ingest a manual resolution below to update organizational knowledge.';
+
+    if (modelBadgeEl) modelBadgeEl.textContent = 'AI Offline';
+    if (confEl) confEl.textContent = '--';
+    if (confLabelEl) confLabelEl.textContent = 'Manual Resolution Mode';
+
+    const defaultRoot = historical.length > 0 ? (historical[0].root_cause || '') : 'Underlying root cause to be investigated by on-call engineer.';
+    const defaultSol = historical.length > 0 ? (historical[0].solution_text || '') : '';
+    const defaultSteps = historical.length > 0 ? (historical[0].action_steps || '') : '1. Inspect system logs and recent changes.\n2. Formulate and verify remediation.\n3. Verify operational recovery.';
+
+    if (rootCauseEl) rootCauseEl.textContent = defaultRoot;
+    if (editRootCauseEl) editRootCauseEl.value = defaultRoot;
+
+    if (primarySolEl) primarySolEl.textContent = defaultSol || 'Enter manual solution...';
+    if (editPrimarySolEl) editPrimarySolEl.value = defaultSol;
+
+    if (actionStepsEl) actionStepsEl.textContent = defaultSteps;
+    if (editActionStepsEl) editActionStepsEl.value = defaultSteps;
+
+    if (altList) {
+      altList.innerHTML = '<li class="text-zinc-500">Manual resolution path active.</li>';
+    }
+
+    if (acceptBtnText) acceptBtnText.textContent = 'Ingest Manual Resolution into Database (SQL)';
+    setEditMode(true);
   }
 
   // Update Operator resolving display
@@ -400,19 +495,37 @@ function setupAcceptSolutionHandler() {
   btn.addEventListener('click', async () => {
     if (!currentActiveProblemId || !currentAIAnalysis) return;
 
+    const tRoot = document.getElementById('edit-root-cause');
+    const tSol = document.getElementById('edit-primary-solution');
+    const tAct = document.getElementById('edit-action-steps');
+
+    const pRoot = document.getElementById('ai-root-cause');
+    const pSol = document.getElementById('ai-primary-solution');
+    const pAct = document.getElementById('ai-action-steps');
+
+    const solutionText = (isEditMode ? tSol?.value : (pSol?.textContent || tSol?.value)) || '';
+    const rootCauseText = (isEditMode ? tRoot?.value : (pRoot?.textContent || tRoot?.value)) || '';
+    const actionStepsText = (isEditMode ? tAct?.value : (pAct?.textContent || tAct?.value)) || '';
+
+    if (!solutionText.trim()) {
+      alert('Please provide a solution description before ingesting into the database.');
+      return;
+    }
+
     btn.disabled = true;
     btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Ingesting into Database...</span>';
 
-    const rec = currentAIAnalysis.ai_recommendation;
     const resolvedByStr = `${activeUser.full_name} (${activeUser.role})`;
+    const isAi = currentAIAnalysis.ai_available && currentAIAnalysis.ai_recommendation;
+    const confScore = isAi ? (currentAIAnalysis.ai_recommendation.confidence_score || 0.92) : 1.0;
 
     const solutionPayload = {
-      solution_text: rec.primary_solution,
-      source: rec.model_used && rec.model_used.includes('Gemini') ? 'AI (Gemini)' : 'AI',
+      solution_text: solutionText.trim(),
+      source: isAi ? 'AI (Gemini)' : 'Human',
       resolved_by: resolvedByStr,
-      confidence_score: rec.confidence_score,
-      root_cause: rec.root_cause,
-      action_steps: rec.action_steps
+      confidence_score: confScore,
+      root_cause: rootCauseText.trim(),
+      action_steps: actionStepsText.trim()
     };
 
     try {
@@ -428,14 +541,13 @@ function setupAcceptSolutionHandler() {
 
       await refreshStats();
       
-      // Notify user
       setTimeout(() => {
         alert(`Success! Incident #${currentActiveProblemId} has been resolved by ${resolvedByStr} and inserted into the solutions table.`);
       }, 300);
     } catch (err) {
       alert(`Failed to accept solution: ${err.message}`);
       btn.disabled = false;
-      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i><span>Accept Solution & Update Database (SQL)</span>';
+      btn.innerHTML = '<i class="fa-solid fa-circle-check"></i><span id="accept-btn-text">Accept Solution & Update Database (SQL)</span>';
     }
   });
 }
@@ -680,12 +792,12 @@ function setupModals() {
     const dotEl = document.getElementById('modal-ai-dot');
 
     if (ai.configured) {
-      titleEl.textContent = 'Gemini 3.8 Flash Active';
-      descEl.textContent = `Using official google-genai SDK. Key: ${ai.masked_key}`;
+      titleEl.textContent = `Google Gemini (${ai.model || 'Live LLM'}) Active`;
+      descEl.textContent = `Connected using official google-genai SDK. Key: ${ai.masked_key}`;
       dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
     } else {
-      titleEl.textContent = 'Local Semantic RAG Mode';
-      descEl.textContent = 'Dynamic token and keyword matching over database records. Zero hardcoding.';
+      titleEl.textContent = 'AI Engine Offline';
+      descEl.textContent = 'Configure a Gemini API Key to enable generative reasoning. Manual resolution and SQL retrieval remain active.';
       dotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
     }
 
@@ -708,7 +820,7 @@ function setupModals() {
         body: JSON.stringify({ api_key: key })
       });
       const data = await res.json();
-      alert('Gemini 3.8 Flash is now active!');
+      alert('Gemini API key successfully saved and active!');
       await checkAIStatus();
       closeModals();
     } catch (err) {
