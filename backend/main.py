@@ -5,9 +5,11 @@ Features:
 - Database-Augmented AI Engine (Google Gemini official SDK + FTS5 BM25 SQL Context)
 - User Authentication & Operator Ownership (reported_by, resolved_by)
 - Live SQL Audit & Execution Explorer
+- Dynamic AI Health Diagnostics & Connection Verification
 """
 
 import os
+from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Query, Header
 from fastapi.staticfiles import StaticFiles
@@ -17,10 +19,18 @@ from pydantic import BaseModel
 import database
 import ai_engine
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    database.init_db()
+    database.seed_db()
+    print("IRIS Database initialized and ready on startup.")
+    yield
+
 app = FastAPI(
     title="IRIS - Intelligent Resolution Incident System",
     description="Database-First Organizational Incident & Decision Intelligence Platform",
-    version="2.0.0"
+    version="2.1.0",
+    lifespan=lifespan
 )
 
 app.add_middleware(
@@ -30,13 +40,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Initialize and seed database on startup
-@app.on_event("startup")
-def startup_event():
-    database.init_db()
-    database.seed_db()
-    print("IRIS Database initialized and ready on startup.")
 
 # Pydantic Request Models
 class ProblemCreate(BaseModel):
@@ -57,6 +60,10 @@ class SolutionResolve(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     api_key: Optional[str] = None
+
+class TestConnectionRequest(BaseModel):
+    api_key: Optional[str] = None
+    model: Optional[str] = None
 
 class UserCreate(BaseModel):
     username: str
@@ -99,6 +106,27 @@ def update_api_key(payload: ApiKeyUpdate):
         "message": "Gemini API key successfully saved and active.",
         "ai_status": ai_engine.get_ai_status()
     }
+
+@app.delete("/api/system/api-key")
+def delete_api_key():
+    """Clear configured Google Gemini API key."""
+    ai_engine.clear_gemini_api_key()
+    return {
+        "status": "success",
+        "message": "Gemini API key cleared.",
+        "ai_status": ai_engine.get_ai_status()
+    }
+
+@app.post("/api/system/test-connection")
+def test_gemini_connection(payload: Optional[TestConnectionRequest] = None):
+    """
+    Test connectivity to Google Gemini via a live API probe call.
+    Accepts optional custom key and model override to test without persisting.
+    """
+    custom_key = payload.api_key if payload else None
+    model = payload.model if payload else None
+    result = ai_engine.verify_gemini_connection(api_key=custom_key, model_name=model)
+    return result
 
 @app.get("/api/users")
 def list_users():
@@ -151,16 +179,20 @@ def create_problem(payload: ProblemCreate):
     return created
 
 @app.post("/api/problems/{problem_id}/analyze")
-def analyze_problem(problem_id: int, payload: Optional[AnalyzeRequest] = None):
+def analyze_problem(
+    problem_id: int,
+    payload: Optional[AnalyzeRequest] = None,
+    x_gemini_api_key: Optional[str] = Header(None, alias="X-Gemini-API-Key")
+):
     """
     Run the IRIS AI Engine on a logged problem.
-    Executes SQL similarity query against historical solutions and generates recommendations via Gemini 3.8 Flash.
+    Executes SQL similarity query against historical solutions and generates recommendations via Gemini.
     """
     prob = database.get_problem(problem_id)
     if not prob:
         raise HTTPException(status_code=404, detail=f"Problem with ID {problem_id} not found.")
     
-    custom_key = payload.api_key if payload else None
+    custom_key = (payload.api_key if payload else None) or x_gemini_api_key
 
     analysis = ai_engine.analyze_incident_and_recommend(
         problem_id=prob["id"],
@@ -199,9 +231,13 @@ def resolve_problem(problem_id: int, payload: SolutionResolve):
     return result
 
 @app.post("/api/auto-classify")
-def auto_classify_incident(payload: ClassifyRequest):
+def auto_classify_incident(
+    payload: ClassifyRequest,
+    x_gemini_api_key: Optional[str] = Header(None, alias="X-Gemini-API-Key")
+):
     """Real-Time AI Auto-Classifier endpoint for incident titles."""
-    return ai_engine.classify_incident_title(payload.title, custom_api_key=payload.api_key)
+    custom_key = payload.api_key or x_gemini_api_key
+    return ai_engine.classify_incident_title(payload.title, custom_api_key=custom_key)
 
 @app.get("/api/explorer/tables")
 def get_database_tables():

@@ -4,64 +4,278 @@ AI Resolution Engine (Google Gemini Official SDK + Database-Augmented Generation
 
 ZERO HARDCODED LOGIC: Pure dynamic SQL retrieval + Real LLM Context Synthesis.
 No silent fallbacks. No fake AI. No simulated responses.
+Honest failure reporting & comprehensive diagnostics.
 """
 
 import os
 import json
 import time
+from pathlib import Path
 from typing import Dict, Any, List, Optional
-from database import find_historical_solutions_by_sql, log_query
+from datetime import datetime
 
-# Load optional .env file if available
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    pass
+from database import find_historical_solutions_by_sql, log_query, get_now_ist
 
 DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
-def get_gemini_api_key() -> Optional[str]:
-    """Retrieve Gemini API key from environment variables."""
-    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+# Root directory resolution for reliable .env discovery
+BACKEND_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = BACKEND_DIR.parent
+ENV_PATH_ROOT = PROJECT_ROOT / ".env"
+ENV_PATH_BACKEND = BACKEND_DIR / ".env"
 
-def set_gemini_api_key(key: str) -> bool:
-    """Dynamically set the Gemini API key in runtime and persist to .env."""
+# Load .env file from project root or backend directory if available
+try:
+    from dotenv import load_dotenv
+    if ENV_PATH_ROOT.exists():
+        load_dotenv(dotenv_path=ENV_PATH_ROOT, override=False)
+    elif ENV_PATH_BACKEND.exists():
+        load_dotenv(dotenv_path=ENV_PATH_BACKEND, override=False)
+    else:
+        load_dotenv(override=False)
+except ImportError:
+    pass
+
+# In-memory runtime override (set via frontend settings modal or API)
+_RUNTIME_API_KEY: Optional[str] = None
+_RUNTIME_MODEL: Optional[str] = None
+
+# Health & diagnostic state
+# States: NOT_CONFIGURED, CONFIGURED_UNVERIFIED, VERIFIED_LIVE, PROVIDER_ERROR
+_AI_HEALTH_STATUS: str = "NOT_CONFIGURED"
+_LAST_ERROR: Optional[str] = None
+_LAST_VERIFIED_AT: Optional[str] = None
+
+
+def mask_api_key(key: Optional[str]) -> Optional[str]:
+    """Masks API key safely for client-side visibility without leaking credentials."""
+    if not key or not key.strip():
+        return None
+    k = key.strip()
+    if len(k) <= 8:
+        return "***"
+    return k[:6] + "..." + k[-4:]
+
+
+def get_gemini_api_key(custom_key: Optional[str] = None) -> Optional[str]:
+    """
+    Retrieve Gemini API key following strict precedence order:
+    1. Per-request custom key (if provided)
+    2. In-memory runtime key (set via settings modal / API)
+    3. Root / backend .env file
+    4. Process environment variables (GEMINI_API_KEY, GOOGLE_API_KEY)
+    """
+    if custom_key and custom_key.strip():
+        return custom_key.strip()
+    if _RUNTIME_API_KEY and _RUNTIME_API_KEY.strip():
+        return _RUNTIME_API_KEY.strip()
+    
+    env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if env_key and env_key.strip():
+        return env_key.strip()
+
+    # Fallback to reading .env directly if environment was modified
+    for p in (ENV_PATH_ROOT, ENV_PATH_BACKEND):
+        if p.exists():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith("GEMINI_API_KEY=") or line.startswith("GOOGLE_API_KEY="):
+                            val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if val:
+                                return val
+            except Exception:
+                pass
+
+    return None
+
+
+def get_gemini_model() -> str:
+    """Retrieve active model name from runtime override or environment."""
+    return _RUNTIME_MODEL or os.environ.get("GEMINI_MODEL") or DEFAULT_GEMINI_MODEL
+
+
+def set_gemini_api_key(key: str, persist_to_env: bool = True) -> bool:
+    """
+    Dynamically set the Gemini API key in runtime and optionally persist to .env.
+    Transitions health status to CONFIGURED_UNVERIFIED.
+    """
+    global _RUNTIME_API_KEY, _AI_HEALTH_STATUS, _LAST_ERROR
     key = key.strip()
     if not key:
         return False
+    
+    _RUNTIME_API_KEY = key
     os.environ["GEMINI_API_KEY"] = key
-    env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+    _AI_HEALTH_STATUS = "CONFIGURED_UNVERIFIED"
+    _LAST_ERROR = None
+
+    if persist_to_env:
+        try:
+            # Preserve existing .env content or create fresh
+            lines = []
+            key_written = False
+            if ENV_PATH_ROOT.exists():
+                with open(ENV_PATH_ROOT, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY="):
+                            lines.append(f"GEMINI_API_KEY={key}\n")
+                            key_written = True
+                        else:
+                            lines.append(line)
+            if not key_written:
+                lines.append(f"GEMINI_API_KEY={key}\n")
+
+            with open(ENV_PATH_ROOT, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except Exception as e:
+            print(f"Warning: Failed to persist key to {ENV_PATH_ROOT}: {e}")
+
+    return True
+
+
+def clear_gemini_api_key() -> bool:
+    """Clears in-memory runtime key and unsets environment variable."""
+    global _RUNTIME_API_KEY, _AI_HEALTH_STATUS, _LAST_ERROR, _LAST_VERIFIED_AT
+    _RUNTIME_API_KEY = None
+    os.environ.pop("GEMINI_API_KEY", None)
+    os.environ.pop("GOOGLE_API_KEY", None)
+    _AI_HEALTH_STATUS = "NOT_CONFIGURED"
+    _LAST_ERROR = None
+    _LAST_VERIFIED_AT = None
+
+    # Remove from .env if present
+    if ENV_PATH_ROOT.exists():
+        try:
+            with open(ENV_PATH_ROOT, "r", encoding="utf-8") as f:
+                lines = [l for l in f if not l.strip().startswith("GEMINI_API_KEY=")]
+            with open(ENV_PATH_ROOT, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+        except Exception:
+            pass
+    return True
+
+
+def verify_gemini_connection(
+    api_key: Optional[str] = None,
+    model_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Validates Gemini connectivity by executing a live probe via the official Google GenAI SDK.
+    Never exposes raw secrets in results. Updates internal health status.
+    """
+    global _AI_HEALTH_STATUS, _LAST_ERROR, _LAST_VERIFIED_AT
+    t0 = time.time()
+    active_key = get_gemini_api_key(custom_key=api_key)
+    active_model = model_name or get_gemini_model()
+
+    if not active_key:
+        _AI_HEALTH_STATUS = "NOT_CONFIGURED"
+        _LAST_ERROR = "No Gemini API key configured."
+        return {
+            "success": False,
+            "status": "NOT_CONFIGURED",
+            "model": active_model,
+            "masked_key": None,
+            "error": "No Gemini API key provided. Set GEMINI_API_KEY in settings or environment."
+        }
+
     try:
-        with open(env_path, "w", encoding="utf-8") as f:
-            f.write(f"GEMINI_API_KEY={key}\n")
-        return True
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=active_key)
+        # Probe using minimal token test
+        response = client.models.generate_content(
+            model=active_model,
+            contents="Respond with the single word: PONG",
+            config=types.GenerateContentConfig(
+                max_output_tokens=10,
+                temperature=0.0
+            )
+        )
+        latency_ms = round((time.time() - t0) * 1000, 2)
+        _AI_HEALTH_STATUS = "VERIFIED_LIVE"
+        _LAST_ERROR = None
+        _LAST_VERIFIED_AT = get_now_ist()
+
+        return {
+            "success": True,
+            "status": "VERIFIED_LIVE",
+            "model": active_model,
+            "masked_key": mask_api_key(active_key),
+            "latency_ms": latency_ms,
+            "probe_response": (response.text or "").strip()[:50],
+            "verified_at": _LAST_VERIFIED_AT,
+            "message": f"Successfully connected to Google Gemini ({active_model}) in {latency_ms}ms."
+        }
     except Exception as e:
-        print(f"Failed to write .env: {e}")
-        return True
+        latency_ms = round((time.time() - t0) * 1000, 2)
+        err_msg = str(e)
+        _AI_HEALTH_STATUS = "PROVIDER_ERROR"
+        _LAST_ERROR = err_msg
+        return {
+            "success": False,
+            "status": "PROVIDER_ERROR",
+            "model": active_model,
+            "masked_key": mask_api_key(active_key),
+            "latency_ms": latency_ms,
+            "error": err_msg,
+            "message": f"Gemini connection failed ({err_msg}). Verify API key permissions and quota."
+        }
+
 
 def get_ai_status() -> Dict[str, Any]:
-    """Returns the current active AI model and configuration status."""
+    """
+    Returns full diagnostic and configuration status:
+    - status: NOT_CONFIGURED | CONFIGURED_UNVERIFIED | VERIFIED_LIVE | PROVIDER_ERROR
+    - configured: bool
+    - masked_key: safe preview (e.g. AIzaSy...1234)
+    - model: model identifier
+    - provider: descriptive provider name
+    """
+    global _AI_HEALTH_STATUS
     api_key = get_gemini_api_key()
-    model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
-    if api_key:
-        masked = api_key[:4] + "..." + api_key[-4:] if len(api_key) > 8 else "***"
+    model = get_gemini_model()
+
+    if not api_key:
+        _AI_HEALTH_STATUS = "NOT_CONFIGURED"
         return {
-            "mode": "gemini",
+            "status": "NOT_CONFIGURED",
+            "mode": "unconfigured",
             "model": model,
             "provider": "Google Gemini (Official google-genai SDK)",
-            "configured": True,
-            "masked_key": masked,
-            "description": f"Connected to live {model} with Database-Augmented Generation (DAG)."
+            "configured": False,
+            "masked_key": None,
+            "last_error": _LAST_ERROR,
+            "last_verified_at": _LAST_VERIFIED_AT,
+            "description": "Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY."
         }
-    return {
-        "mode": "unconfigured",
-        "model": None,
-        "provider": None,
-        "configured": False,
-        "masked_key": None,
-        "description": "Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY."
+
+    # If key exists but status is still NOT_CONFIGURED, promote to CONFIGURED_UNVERIFIED
+    if _AI_HEALTH_STATUS == "NOT_CONFIGURED":
+        _AI_HEALTH_STATUS = "CONFIGURED_UNVERIFIED"
+
+    masked = mask_api_key(api_key)
+    desc_map = {
+        "CONFIGURED_UNVERIFIED": f"API key configured ({masked}). Ready for synthesis or live connection test.",
+        "VERIFIED_LIVE": f"Connected and verified live with {model}. Database-Augmented Generation active.",
+        "PROVIDER_ERROR": f"Key configured ({masked}) but encountered error: {_LAST_ERROR}"
     }
+
+    return {
+        "status": _AI_HEALTH_STATUS,
+        "mode": "gemini",
+        "model": model,
+        "provider": "Google Gemini (Official google-genai SDK)",
+        "configured": True,
+        "masked_key": masked,
+        "last_error": _LAST_ERROR,
+        "last_verified_at": _LAST_VERIFIED_AT,
+        "description": desc_map.get(_AI_HEALTH_STATUS, f"Gemini key configured ({masked}).")
+    }
+
 
 def analyze_incident_and_recommend(
     problem_id: int,
@@ -80,6 +294,7 @@ def analyze_incident_and_recommend(
     3. Grounded citation of past database records or first-principles novel diagnosis.
     4. Honest reporting: If AI key is missing or call fails, returns ai_available: False (NO fake responses).
     """
+    global _AI_HEALTH_STATUS, _LAST_ERROR, _LAST_VERIFIED_AT
     t0 = time.time()
 
     # Step 1: Real SQL Retrieval from Relational Knowledge Store
@@ -92,8 +307,8 @@ def analyze_incident_and_recommend(
     sql_used = retrieval_result.get("sql_query", "")
     retrieval_time_ms = retrieval_result.get("execution_time_ms", 0.0)
 
-    # Check for Gemini API key (passed via request or env)
-    active_key = (custom_api_key or "").strip() or get_gemini_api_key()
+    # Step 2: Check for Gemini API key via priority hierarchy
+    active_key = get_gemini_api_key(custom_key=custom_api_key)
 
     if active_key:
         try:
@@ -109,6 +324,12 @@ def analyze_incident_and_recommend(
                 historical_matches=historical_matches
             )
             elapsed_ms = (time.time() - t0) * 1000
+
+            # Promote health status to VERIFIED_LIVE on successful response
+            _AI_HEALTH_STATUS = "VERIFIED_LIVE"
+            _LAST_ERROR = None
+            _LAST_VERIFIED_AT = get_now_ist()
+
             return {
                 "problem_id": problem_id,
                 "title": title,
@@ -116,6 +337,7 @@ def analyze_incident_and_recommend(
                 "severity": severity,
                 "ai_available": True,
                 "ai_recommendation": ai_result,
+                "status": "VERIFIED_LIVE",
                 "sql_context": {
                     "query_executed": sql_used,
                     "search_strategy": retrieval_result.get("search_strategy", "SQL"),
@@ -127,7 +349,12 @@ def analyze_incident_and_recommend(
             }
         except Exception as e:
             elapsed_ms = (time.time() - t0) * 1000
-            print(f"Gemini LLM Call failed: {e}")
+            err_msg = str(e)
+            print(f"Gemini LLM Call failed: {err_msg}")
+
+            _AI_HEALTH_STATUS = "PROVIDER_ERROR"
+            _LAST_ERROR = err_msg
+
             return {
                 "problem_id": problem_id,
                 "title": title,
@@ -135,7 +362,8 @@ def analyze_incident_and_recommend(
                 "severity": severity,
                 "ai_available": False,
                 "ai_recommendation": None,
-                "error": f"AI Engine provider error: {str(e)}",
+                "status": "PROVIDER_ERROR",
+                "error": f"AI Engine provider error: {err_msg}",
                 "sql_context": {
                     "query_executed": sql_used,
                     "search_strategy": retrieval_result.get("search_strategy", "SQL"),
@@ -146,8 +374,9 @@ def analyze_incident_and_recommend(
                 "historical_matches": historical_matches
             }
 
-    # Honest unconfigured state: NO fake generation, NO simulated responses
+    # Step 3: Honest unconfigured state (NO fake generation, NO simulated responses)
     elapsed_ms = (time.time() - t0) * 1000
+    _AI_HEALTH_STATUS = "NOT_CONFIGURED"
     return {
         "problem_id": problem_id,
         "title": title,
@@ -155,6 +384,7 @@ def analyze_incident_and_recommend(
         "severity": severity,
         "ai_available": False,
         "ai_recommendation": None,
+        "status": "NOT_CONFIGURED",
         "error": "Gemini API key is not configured. Configure GEMINI_API_KEY in the top settings modal or in your environment to enable AI synthesis.",
         "sql_context": {
             "query_executed": sql_used,
@@ -165,6 +395,7 @@ def analyze_incident_and_recommend(
         },
         "historical_matches": historical_matches
     }
+
 
 def _call_gemini_llm(
     api_key: str,
@@ -182,7 +413,7 @@ def _call_gemini_llm(
     from google import genai
     from google.genai import types
 
-    active_model = model_name or os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    active_model = model_name or get_gemini_model()
     client = genai.Client(api_key=api_key)
 
     # Format historical records for prompt
@@ -254,7 +485,7 @@ Analyze the new incident against the organizational history provided above. Prod
         )
     )
 
-    raw_text = response.text.strip()
+    raw_text = (response.text or "").strip()
     data = json.loads(raw_text)
 
     # Validate and bound confidence score honestly from model
@@ -275,6 +506,7 @@ Analyze the new incident against the organizational history provided above. Prod
         "is_novel": bool(data.get("is_novel", is_novel))
     }
 
+
 def classify_incident_title(title: str, custom_api_key: Optional[str] = None) -> Dict[str, Any]:
     """
     Real-Time AI Auto-Classifier for Incident Title.
@@ -291,7 +523,7 @@ def classify_incident_title(title: str, custom_api_key: Optional[str] = None) ->
             "suggested_description": ""
         }
 
-    api_key = (custom_api_key or "").strip() or get_gemini_api_key()
+    api_key = get_gemini_api_key(custom_key=custom_api_key)
     if not api_key:
         return {
             "ai_available": False,
@@ -302,7 +534,7 @@ def classify_incident_title(title: str, custom_api_key: Optional[str] = None) ->
             "message": "AI auto-classifier requires GEMINI_API_KEY."
         }
 
-    active_model = os.environ.get("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)
+    active_model = get_gemini_model()
     try:
         from google import genai
         from google.genai import types
@@ -329,7 +561,7 @@ Return ONLY JSON:
             contents=prompt,
             config=types.GenerateContentConfig(response_mime_type="application/json", temperature=0.1)
         )
-        parsed = json.loads(res.text)
+        parsed = json.loads(res.text or "{}")
         parsed["ai_available"] = True
         return parsed
     except Exception as e:

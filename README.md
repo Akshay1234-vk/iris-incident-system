@@ -116,11 +116,13 @@ Open your browser at: **[http://localhost:8000](http://localhost:8000)**
 
 ## 🧪 Running the Test Suite
 
-The repository includes a comprehensive 15-test verification suite covering database seeding, FTS5 BM25 retrieval, Gemini context grounding, novel incident handling, provider error resilience, and manual resolution flows.
+The repository includes a comprehensive 20-test verification suite covering database seeding, FTS5 BM25 retrieval, Gemini context grounding, novel incident handling, credential precedence hierarchy, health status state transitions, live probe verification, safe key masking, provider error resilience, and manual resolution flows.
 
 Run all tests:
 ```bash
 python -m unittest discover backend -v
+# or with pytest:
+python -m pytest backend/ -v
 ```
 
 Or run individual test modules:
@@ -128,7 +130,7 @@ Or run individual test modules:
 # Core database and end-to-end integration tests:
 python backend/test_iris.py
 
-# AI engine, LLM mocking, and failure mode tests:
+# AI engine, LLM mocking, failure mode, and diagnostic tests:
 python backend/test_ai_engine.py
 ```
 

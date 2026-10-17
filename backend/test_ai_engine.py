@@ -10,6 +10,11 @@ Covers:
 5. Malformed LLM Output Handling
 6. Real-Time Auto-Classification Verification (Real AI vs Unconfigured state)
 7. Manual Resolution Workflow (Human engineer path when AI is offline)
+8. Credential Precedence Hierarchy (Request key > Runtime key > .env > os.environ)
+9. AI Health State Machine (NOT_CONFIGURED, CONFIGURED_UNVERIFIED, VERIFIED_LIVE, PROVIDER_ERROR)
+10. Live Connection Probe Endpoint (/api/system/test-connection)
+11. Safe Key Masking (Zero credential leaks in API responses or logs)
+12. Key Deletion / Disconnect Lifecycle
 """
 
 import os
@@ -22,6 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import database
 import ai_engine
+from main import app
+from fastapi.testclient import TestClient
 
 class TestAIEngine(unittest.TestCase):
 
@@ -29,6 +36,14 @@ class TestAIEngine(unittest.TestCase):
     def setUpClass(cls):
         database.init_db()
         database.reset_to_seed()
+        cls.client = TestClient(app)
+
+    def setUp(self):
+        # Reset runtime keys before each test
+        ai_engine.clear_gemini_api_key()
+
+    def tearDown(self):
+        ai_engine.clear_gemini_api_key()
 
     def test_01_missing_api_key_reports_honest_status_no_fake_ai(self):
         """Verify that when no API key is provided, the engine reports ai_available: False with NO fake AI output."""
@@ -44,6 +59,7 @@ class TestAIEngine(unittest.TestCase):
 
             self.assertFalse(result["ai_available"])
             self.assertIsNone(result["ai_recommendation"])
+            self.assertEqual(result["status"], "NOT_CONFIGURED")
             self.assertIn("error", result)
             self.assertIn("GEMINI_API_KEY", result["error"])
             self.assertIn("sql_context", result)
@@ -83,7 +99,7 @@ class TestAIEngine(unittest.TestCase):
                 category="Performance",
                 severity="High",
                 keywords="api, latency, slow query, missing index, performance",
-                custom_api_key="test_fake_api_key_12345"
+                custom_api_key="AIzaSyTestKeyScenarioA1234"
             )
 
             self.assertTrue(result["ai_available"])
@@ -130,7 +146,7 @@ class TestAIEngine(unittest.TestCase):
                 category="QuantumCryogenics",
                 severity="Critical",
                 keywords="subkelvin, cryostat, dilution refrigerator, thermal coupling",
-                custom_api_key="test_fake_api_key_12345"
+                custom_api_key="AIzaSyTestKeyScenarioB5678"
             )
 
             self.assertTrue(result["ai_available"])
@@ -146,7 +162,7 @@ class TestAIEngine(unittest.TestCase):
             self.assertIn("HISTORICAL DATABASE PRECEDENTS RETRIEVED VIA SQL (0 records)", contents)
 
     def test_04_gemini_api_provider_exception_returns_honest_error(self):
-        """Verify that when Gemini API call raises an exception (e.g. quota, timeout, network failure), it reports the error honestly and does NOT use fake fallbacks."""
+        """Verify that when Gemini API call raises an exception, it reports the error honestly and does NOT use fake fallbacks."""
         mock_client = MagicMock()
         mock_client.models.generate_content.side_effect = Exception("ResourceExhausted: 429 Resource has been exhausted (e.g. check quota).")
 
@@ -158,11 +174,12 @@ class TestAIEngine(unittest.TestCase):
                 category="Database",
                 severity="Critical",
                 keywords="deadlock, settlement, transaction",
-                custom_api_key="test_fake_api_key_12345"
+                custom_api_key="AIzaSyTestKeyException1234"
             )
 
             self.assertFalse(result["ai_available"])
             self.assertIsNone(result["ai_recommendation"])
+            self.assertEqual(result["status"], "PROVIDER_ERROR")
             self.assertIn("error", result)
             self.assertIn("ResourceExhausted", result["error"])
             # Historical context should still be preserved
@@ -184,7 +201,7 @@ class TestAIEngine(unittest.TestCase):
                 category="Authentication",
                 severity="High",
                 keywords="redis, cache, serialization",
-                custom_api_key="test_fake_api_key_12345"
+                custom_api_key="AIzaSyTestKeyMalformed1234"
             )
 
             self.assertFalse(result["ai_available"])
@@ -211,7 +228,7 @@ class TestAIEngine(unittest.TestCase):
         mock_client.models.generate_content.return_value = mock_res
 
         with patch("google.genai.Client", return_value=mock_client):
-            res = ai_engine.classify_incident_title("Deadlock on user account transfer", custom_api_key="fake_key")
+            res = ai_engine.classify_incident_title("Deadlock on user account transfer", custom_api_key="AIzaSyTestClassify1234")
             self.assertTrue(res["ai_available"])
             self.assertEqual(res["category"], "Database")
             self.assertEqual(res["severity"], "Critical")
@@ -248,6 +265,107 @@ class TestAIEngine(unittest.TestCase):
         resolved_prob = database.get_problem(prob["id"])
         self.assertEqual(resolved_prob["status"], "RESOLVED")
         self.assertEqual(len(resolved_prob["solutions"]), 1)
+
+    def test_09_credential_precedence_hierarchy(self):
+        """Verify strict priority ordering: Request Custom Key > Runtime In-Memory Key > os.environ."""
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "env_key_level_3"}, clear=True):
+            # Level 3: os.environ
+            self.assertEqual(ai_engine.get_gemini_api_key(), "env_key_level_3")
+
+            # Level 2: Runtime in-memory key overrides os.environ
+            ai_engine.set_gemini_api_key("runtime_key_level_2", persist_to_env=False)
+            self.assertEqual(ai_engine.get_gemini_api_key(), "runtime_key_level_2")
+
+            # Level 1: Per-request custom key overrides runtime and env
+            self.assertEqual(
+                ai_engine.get_gemini_api_key(custom_key="request_key_level_1"),
+                "request_key_level_1"
+            )
+
+    def test_10_ai_health_state_transitions(self):
+        """Verify AI engine health status state transitions: NOT_CONFIGURED -> CONFIGURED_UNVERIFIED -> VERIFIED_LIVE -> PROVIDER_ERROR."""
+        with patch.dict(os.environ, {}, clear=True):
+            # 1. Initially unconfigured
+            status = ai_engine.get_ai_status()
+            self.assertEqual(status["status"], "NOT_CONFIGURED")
+            self.assertFalse(status["configured"])
+
+            # 2. Setting key transitions to CONFIGURED_UNVERIFIED
+            ai_engine.set_gemini_api_key("AIzaSyTestTransitionsKey1234", persist_to_env=False)
+            status2 = ai_engine.get_ai_status()
+            self.assertEqual(status2["status"], "CONFIGURED_UNVERIFIED")
+            self.assertTrue(status2["configured"])
+            self.assertEqual(status2["masked_key"], "AIzaSy...1234")
+
+            # 3. Successful probe transitions to VERIFIED_LIVE
+            mock_res = MagicMock()
+            mock_res.text = "PONG"
+            mock_client = MagicMock()
+            mock_client.models.generate_content.return_value = mock_res
+            with patch("google.genai.Client", return_value=mock_client):
+                probe = ai_engine.verify_gemini_connection()
+                self.assertTrue(probe["success"])
+                self.assertEqual(probe["status"], "VERIFIED_LIVE")
+
+            status3 = ai_engine.get_ai_status()
+            self.assertEqual(status3["status"], "VERIFIED_LIVE")
+            self.assertIsNotNone(status3["last_verified_at"])
+
+            # 4. Clearing key resets to NOT_CONFIGURED
+            ai_engine.clear_gemini_api_key()
+            status4 = ai_engine.get_ai_status()
+            self.assertEqual(status4["status"], "NOT_CONFIGURED")
+            self.assertFalse(status4["configured"])
+
+    def test_11_verify_gemini_connection_probe(self):
+        """Verify the test_connection probe handles success, failures, and unconfigured states honestly."""
+        # Unconfigured probe
+        with patch.dict(os.environ, {}, clear=True):
+            res_unconfigured = ai_engine.verify_gemini_connection()
+            self.assertFalse(res_unconfigured["success"])
+            self.assertEqual(res_unconfigured["status"], "NOT_CONFIGURED")
+
+        # Failed probe (Provider error)
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("API_KEY_INVALID: API key not valid. Please pass a valid API key.")
+        with patch("google.genai.Client", return_value=mock_client):
+            res_invalid = ai_engine.verify_gemini_connection(api_key="invalid_probe_key_1234")
+            self.assertFalse(res_invalid["success"])
+            self.assertEqual(res_invalid["status"], "PROVIDER_ERROR")
+            self.assertIn("API_KEY_INVALID", res_invalid["error"])
+
+    def test_12_key_masking_security(self):
+        """Verify that API keys are masked safely and never leaked."""
+        self.assertIsNone(ai_engine.mask_api_key(None))
+        self.assertIsNone(ai_engine.mask_api_key(""))
+        self.assertEqual(ai_engine.mask_api_key("short"), "***")
+        masked = ai_engine.mask_api_key("AIzaSyB1234567890abcdefXYZ9999")
+        self.assertTrue(masked.startswith("AIzaSy..."))
+        self.assertTrue(masked.endswith("9999"))
+        self.assertNotIn("1234567890abcdefXYZ", masked)
+
+    def test_13_api_endpoints_test_connection_and_clear(self):
+        """Verify FastAPI endpoints: POST /api/system/test-connection and DELETE /api/system/api-key."""
+        # 1. Test POST /api/system/api-key
+        post_res = self.client.post("/api/system/api-key", json={"api_key": "AIzaSyEndpointTestKey1234"})
+        self.assertEqual(post_res.status_code, 200)
+        self.assertEqual(post_res.json()["status"], "success")
+
+        # 2. Test POST /api/system/test-connection with mock
+        mock_res = MagicMock()
+        mock_res.text = "PONG"
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_res
+        with patch("google.genai.Client", return_value=mock_client):
+            conn_res = self.client.post("/api/system/test-connection", json={})
+            self.assertEqual(conn_res.status_code, 200)
+            self.assertTrue(conn_res.json()["success"])
+            self.assertEqual(conn_res.json()["status"], "VERIFIED_LIVE")
+
+        # 3. Test DELETE /api/system/api-key
+        del_res = self.client.delete("/api/system/api-key")
+        self.assertEqual(del_res.status_code, 200)
+        self.assertEqual(del_res.json()["ai_status"]["status"], "NOT_CONFIGURED")
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

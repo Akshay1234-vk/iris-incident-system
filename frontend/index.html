@@ -300,10 +300,15 @@
               </div>
 
               <!-- AI Offline Warning Banner (Shown only when AI is unavailable) -->
-              <div id="ai-offline-banner" class="hidden p-3.5 rounded-lg bg-amber-950/40 border border-amber-800/80 text-amber-200 text-xs space-y-1">
-                <div class="font-bold flex items-center gap-2">
-                  <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
-                  <span>AI Engine Unavailable / Key Not Configured</span>
+              <div id="ai-offline-banner" class="hidden p-3.5 rounded-lg bg-amber-950/40 border border-amber-800/80 text-amber-200 text-xs space-y-2">
+                <div class="flex items-center justify-between">
+                  <div class="font-bold flex items-center gap-2">
+                    <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
+                    <span id="ai-offline-title">AI Engine Unavailable / Key Not Configured</span>
+                  </div>
+                  <button type="button" id="btn-banner-configure-ai" class="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-600/50 text-amber-300 text-[10px] font-medium flex items-center gap-1 cursor-pointer transition">
+                    <i class="fa-solid fa-gear"></i><span>Configure Key</span>
+                  </button>
                 </div>
                 <p class="text-[11px] text-amber-300/80 leading-relaxed" id="ai-offline-message">
                   Gemini API key is not configured. Historical SQL database retrieval succeeded above. You can formulate and ingest a manual resolution below to update organizational knowledge.
@@ -638,38 +643,71 @@
     </div>
   </div>
 
-  <!-- MODAL: AI ENGINE CONFIGURATION -->
+  <!-- MODAL: AI ENGINE CONFIGURATION & DIAGNOSTICS -->
   <div id="modal-ai" class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
     <div class="bg-zinc-950 border border-zinc-800 rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between border-b border-zinc-800 pb-3">
         <h3 class="text-sm font-bold text-white flex items-center gap-2">
-          <i class="fa-solid fa-microchip text-blue-400"></i>AI Engine Settings
+          <i class="fa-solid fa-microchip text-blue-400"></i>AI Engine Diagnostics & Settings
         </h3>
         <button id="btn-close-ai-modal" class="text-zinc-400 hover:text-white cursor-pointer"><i class="fa-solid fa-xmark"></i></button>
       </div>
 
       <div class="space-y-3 text-xs">
-        <div class="bg-zinc-900/80 p-3 rounded-lg border border-zinc-800 space-y-1">
-          <div class="font-bold text-zinc-200 flex items-center gap-1.5">
-            <span id="modal-ai-dot" class="w-2 h-2 rounded-full bg-amber-400"></span>
-            <span id="modal-ai-title">Local Semantic RAG Mode</span>
+        <!-- Live Diagnostic Status Box -->
+        <div class="bg-zinc-900/80 p-3 rounded-lg border border-zinc-800 space-y-1.5">
+          <div class="flex items-center justify-between">
+            <div class="font-bold text-zinc-200 flex items-center gap-1.5">
+              <span id="modal-ai-dot" class="w-2.5 h-2.5 rounded-full bg-amber-400"></span>
+              <span id="modal-ai-title">NOT_CONFIGURED</span>
+            </div>
+            <span id="modal-ai-badge" class="px-2 py-0.5 rounded font-mono text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700">Offline</span>
           </div>
-          <p id="modal-ai-desc" class="text-zinc-400 text-[11px]">
-            Dynamic token and keyword matching over database records. Zero hardcoded strings.
+          <p id="modal-ai-desc" class="text-zinc-400 text-[11px] leading-relaxed">
+            Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY.
           </p>
+          <div id="modal-ai-details" class="text-[10px] text-zinc-500 font-mono hidden pt-1 border-t border-zinc-800"></div>
+        </div>
+
+        <!-- Connection Test Feedback Banner -->
+        <div id="modal-test-banner" class="hidden p-2.5 rounded-lg text-[11px] leading-relaxed space-y-1"></div>
+
+        <div>
+          <label class="block font-medium text-zinc-300 mb-1">Google Gemini API Key:</label>
+          <div class="relative">
+            <input type="password" id="input-gemini-key" placeholder="AIzaSy... (leave blank to use env)"
+                   class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-white transition pr-14">
+            <button type="button" id="btn-toggle-key-visibility" class="absolute right-2 top-2 text-[10px] text-zinc-400 hover:text-white px-1.5 py-0.5 cursor-pointer">Show</button>
+          </div>
+          <div class="flex items-center justify-between text-[10px] text-zinc-400 mt-1">
+            <span>Current: <strong id="modal-masked-key" class="text-zinc-300 font-mono">None</strong></span>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-400 hover:underline">Get Free Key &rarr;</a>
+          </div>
         </div>
 
         <div>
-          <label class="block font-medium text-zinc-300 mb-1">Google Gemini API Key (Optional):</label>
-          <input type="password" id="input-gemini-key" placeholder="AIzaSy..."
-                 class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-white placeholder-zinc-500 font-mono focus:outline-none focus:border-white transition">
-          <p class="text-[10px] text-zinc-400 mt-1">
-            Enables full <strong class="text-zinc-200">Gemini 3.8 Flash</strong> generative reasoning over past SQL records. Get a free key at <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-blue-400 underline">Google AI Studio</a>.
-          </p>
+          <label class="block font-medium text-zinc-300 mb-1">Target Model:</label>
+          <div class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-200 font-mono flex items-center justify-between">
+            <span id="modal-ai-model-name">gemini-2.5-flash</span>
+            <span class="text-[10px] text-emerald-400 font-sans">Official Google GenAI SDK</span>
+          </div>
         </div>
 
-        <button type="button" id="btn-save-gemini-key" class="w-full bg-white hover:bg-zinc-200 text-black font-bold py-2 rounded-lg text-xs transition cursor-pointer">
-          Save & Activate Gemini 3.8 Flash
+        <!-- Action Buttons -->
+        <div class="grid grid-cols-2 gap-2 pt-1">
+          <button type="button" id="btn-test-connection" class="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold py-2 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 cursor-pointer border border-zinc-700">
+            <i class="fa-solid fa-satellite-dish text-blue-400"></i>
+            <span>Test Connection</span>
+          </button>
+          <button type="button" id="btn-save-gemini-key" class="bg-white hover:bg-zinc-200 text-black font-bold py-2 rounded-lg text-xs transition flex items-center justify-center space-x-1.5 cursor-pointer">
+            <i class="fa-solid fa-floppy-disk"></i>
+            <span>Save & Activate</span>
+          </button>
+        </div>
+
+        <button type="button" id="btn-clear-gemini-key" class="w-full text-zinc-500 hover:text-red-400 text-[11px] py-1 transition flex items-center justify-center space-x-1 cursor-pointer">
+          <i class="fa-solid fa-trash-can text-[10px]"></i>
+          <span>Clear / Disconnect Key</span>
         </button>
       </div>
     </div>

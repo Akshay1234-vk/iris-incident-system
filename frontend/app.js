@@ -1,6 +1,6 @@
 /**
  * IRIS (Intelligent Resolution Incident System)
- * Frontend Controller with Operator Identity, Gemini 3.8 Flash, and Closed-Loop SQL Ingestion
+ * Frontend Controller with Operator Identity, Gemini Official SDK, and Closed-Loop SQL Ingestion
  */
 
 const API_BASE = window.location.origin;
@@ -15,6 +15,7 @@ let activeUser = {
   full_name: 'Akshay Kumar',
   role: 'Lead SRE'
 };
+let cachedAIStatus = null;
 
 // Quick Presets Data
 const PRESETS = {
@@ -71,6 +72,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupModals();
   setupResetButton();
 });
+
+// Helper: retrieve client-side stored API key
+function getStoredApiKey() {
+  return (localStorage.getItem('iris_gemini_key') || '').trim();
+}
 
 // 1. Operator Identity & User Management
 async function loadUsers() {
@@ -150,32 +156,41 @@ function renderUserSelectionList() {
   });
 }
 
-// 2. AI Engine Status & Configuration
+// 2. AI Engine Status & Diagnostics
 async function checkAIStatus() {
   try {
     const res = await fetch(`${API_BASE}/api/system/status`);
     const data = await res.json();
     const ai = data.ai_engine;
+    cachedAIStatus = ai;
 
     const modelEl = document.getElementById('header-ai-model');
     const provEl = document.getElementById('header-ai-provider');
     const dotEl = document.getElementById('ai-status-dot');
 
-    if (ai.configured && ai.mode === 'gemini') {
-      if (modelEl) modelEl.textContent = `Gemini (${ai.model || 'Connected'})`;
-      if (provEl) provEl.textContent = 'Live LLM Active';
-      if (dotEl) {
-        dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
-      }
+    const status = ai.status || (ai.configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED');
+
+    if (status === 'VERIFIED_LIVE') {
+      if (modelEl) modelEl.textContent = `Gemini (${ai.model || 'Live'})`;
+      if (provEl) provEl.textContent = 'Live LLM Verified';
+      if (dotEl) dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-500/50';
+    } else if (status === 'CONFIGURED_UNVERIFIED') {
+      if (modelEl) modelEl.textContent = `Gemini (${ai.model || 'Configured'})`;
+      if (provEl) provEl.textContent = `Key Configured (${ai.masked_key || 'Active'})`;
+      if (dotEl) dotEl.className = 'w-2 h-2 rounded-full bg-blue-400 shadow-sm shadow-blue-500/50';
+    } else if (status === 'PROVIDER_ERROR') {
+      if (modelEl) modelEl.textContent = 'AI Provider Error';
+      if (provEl) provEl.textContent = 'Click to inspect error';
+      if (dotEl) dotEl.className = 'w-2 h-2 rounded-full bg-red-400 shadow-sm shadow-red-500/50';
     } else {
       if (modelEl) modelEl.textContent = 'AI Engine: Offline';
       if (provEl) provEl.textContent = 'Click to configure Gemini API Key';
-      if (dotEl) {
-        dotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
-      }
+      if (dotEl) dotEl.className = 'w-2 h-2 rounded-full bg-amber-400 shadow-sm shadow-amber-500/50';
     }
+    return ai;
   } catch (err) {
     console.error('Failed to check AI status:', err);
+    return null;
   }
 }
 
@@ -236,10 +251,14 @@ function setupAutoClassifier() {
 
     autoClassifyTimer = setTimeout(async () => {
       try {
+        const storedKey = getStoredApiKey();
+        const payload = { title: titleVal };
+        if (storedKey) payload.api_key = storedKey;
+
         const res = await fetch(`${API_BASE}/api/auto-classify`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ title: titleVal })
+          body: JSON.stringify(payload)
         });
         const inferred = await res.json();
         
@@ -267,7 +286,7 @@ function setupAutoClassifier() {
       } catch (err) {
         console.error('Auto-classify error:', err);
       }
-    }, 250);
+    }, 300);
   });
 
   document.getElementById('input-keywords')?.addEventListener('input', (e) => {
@@ -312,16 +331,21 @@ function setupFormHandler() {
       // Step B: Run AI Analysis
       btn.innerHTML = '<i class="fa-solid fa-brain fa-fade"></i><span>AI Reasoning over Database Records...</span>';
 
+      const storedKey = getStoredApiKey();
+      const analyzePayload = {};
+      if (storedKey) analyzePayload.api_key = storedKey;
+
       const analyzeRes = await fetch(`${API_BASE}/api/problems/${currentActiveProblemId}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
+        body: JSON.stringify(analyzePayload)
       });
       const analysisData = await analyzeRes.json();
       currentAIAnalysis = analysisData;
 
       // Render output
       renderAIAnalysis(analysisData);
+      await checkAIStatus();
       await refreshStats();
     } catch (err) {
       alert(`Error running incident analysis: ${err.message}`);
@@ -403,6 +427,7 @@ function renderAIAnalysis(data) {
   const precedentsContainer = document.getElementById('ai-precedents-list');
   const altList = document.getElementById('ai-alternatives-list');
   const offlineBanner = document.getElementById('ai-offline-banner');
+  const offlineTitle = document.getElementById('ai-offline-title');
   const offlineMsg = document.getElementById('ai-offline-message');
   const acceptBtnText = document.getElementById('accept-btn-text');
 
@@ -420,7 +445,7 @@ function renderAIAnalysis(data) {
         </span>
       `).join('');
     } else {
-      precedentsContainer.innerHTML = '<span class="text-zinc-500 text-[11px]">Novel incident: No direct prior match found in database.</span>';
+      precedentsContainer.innerHTML = '<span class="text-zinc-500 text-[11px]">Novel incident: No direct prior match found in database. First-principles reasoning engaged.</span>';
     }
   }
 
@@ -429,7 +454,7 @@ function renderAIAnalysis(data) {
     const rec = data.ai_recommendation;
     offlineBanner?.classList.add('hidden');
 
-    if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Google Gemini';
+    if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Google Gemini (gemini-2.5-flash)';
     if (confEl) confEl.textContent = rec.confidence_percentage || `${Math.round((rec.confidence_score || 0.9) * 100)}%`;
     if (confLabelEl) confLabelEl.textContent = rec.is_novel ? 'First-Principles Confidence' : 'Evidence-Grounded Confidence';
 
@@ -455,11 +480,21 @@ function renderAIAnalysis(data) {
     if (acceptBtnText) acceptBtnText.textContent = 'Accept Solution & Update Database (SQL)';
     setEditMode(false);
   } else {
-    // AI is offline / unconfigured
+    // AI is offline / unconfigured / provider error
     offlineBanner?.classList.remove('hidden');
-    if (offlineMsg) offlineMsg.textContent = data.error || 'Gemini API key is not configured. Historical SQL database retrieval succeeded above. You can formulate and ingest a manual resolution below to update organizational knowledge.';
 
-    if (modelBadgeEl) modelBadgeEl.textContent = 'AI Offline';
+    if (data.status === 'PROVIDER_ERROR') {
+      if (offlineTitle) offlineTitle.textContent = 'AI Provider Error / Quota Exceeded';
+      if (modelBadgeEl) modelBadgeEl.textContent = 'Provider Error';
+    } else {
+      if (offlineTitle) offlineTitle.textContent = 'AI Engine Unavailable / Key Not Configured';
+      if (modelBadgeEl) modelBadgeEl.textContent = 'AI Offline';
+    }
+
+    if (offlineMsg) {
+      offlineMsg.textContent = data.error || 'Gemini API key is not configured. Historical SQL database retrieval succeeded above. You can formulate and ingest a manual resolution below to update organizational knowledge.';
+    }
+
     if (confEl) confEl.textContent = '--';
     if (confLabelEl) confLabelEl.textContent = 'Manual Resolution Mode';
 
@@ -736,7 +771,7 @@ function setupKnowledgeBase() {
   });
 }
 
-// 11. Modals Management
+// 11. Modals & Settings Management
 function setupModals() {
   const modalUser = document.getElementById('modal-user');
   const modalAI = document.getElementById('modal-ai');
@@ -782,49 +817,194 @@ function setupModals() {
   });
 
   // Open AI Modal
-  document.getElementById('btn-ai-modal')?.addEventListener('click', async () => {
-    const res = await fetch(`${API_BASE}/api/system/status`);
-    const data = await res.json();
-    const ai = data.ai_engine;
+  const openAIModal = async () => {
+    const ai = await checkAIStatus();
+    if (!ai) return;
 
     const titleEl = document.getElementById('modal-ai-title');
     const descEl = document.getElementById('modal-ai-desc');
     const dotEl = document.getElementById('modal-ai-dot');
+    const badgeEl = document.getElementById('modal-ai-badge');
+    const maskedKeyEl = document.getElementById('modal-masked-key');
+    const detailsEl = document.getElementById('modal-ai-details');
+    const testBanner = document.getElementById('modal-test-banner');
+    const modelNameEl = document.getElementById('modal-ai-model-name');
+    const keyInput = document.getElementById('input-gemini-key');
 
-    if (ai.configured) {
-      titleEl.textContent = `Google Gemini (${ai.model || 'Live LLM'}) Active`;
-      descEl.textContent = `Connected using official google-genai SDK. Key: ${ai.masked_key}`;
-      dotEl.className = 'w-2 h-2 rounded-full bg-emerald-400';
+    if (testBanner) testBanner.classList.add('hidden');
+    if (modelNameEl) modelNameEl.textContent = ai.model || 'gemini-2.5-flash';
+    if (maskedKeyEl) maskedKeyEl.textContent = ai.masked_key || 'None';
+
+    const savedLocal = getStoredApiKey();
+    if (keyInput && savedLocal && !keyInput.value) {
+      keyInput.value = savedLocal;
+    }
+
+    const status = ai.status || (ai.configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED');
+    if (titleEl) titleEl.textContent = status;
+
+    if (status === 'VERIFIED_LIVE') {
+      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+      if (badgeEl) {
+        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800';
+        badgeEl.textContent = 'Verified Live';
+      }
+      if (descEl) descEl.textContent = ai.description || 'Connected and verified live with Gemini. Database-Augmented Generation active.';
+      if (detailsEl) {
+        detailsEl.textContent = `Last verified at: ${ai.last_verified_at || 'Just now'}`;
+        detailsEl.classList.remove('hidden');
+      }
+    } else if (status === 'CONFIGURED_UNVERIFIED') {
+      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-blue-400';
+      if (badgeEl) {
+        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-blue-950 text-blue-300 border border-blue-800';
+        badgeEl.textContent = 'Configured (Unverified)';
+      }
+      if (descEl) descEl.textContent = ai.description || 'API key is configured. Run "Test Connection" to perform a live probe.';
+      if (detailsEl) detailsEl.classList.add('hidden');
+    } else if (status === 'PROVIDER_ERROR') {
+      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-red-400';
+      if (badgeEl) {
+        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-red-950 text-red-300 border border-red-800';
+        badgeEl.textContent = 'Provider Error';
+      }
+      if (descEl) descEl.textContent = ai.last_error || 'Encountered error communicating with Gemini provider.';
+      if (detailsEl) detailsEl.classList.add('hidden');
     } else {
-      titleEl.textContent = 'AI Engine Offline';
-      descEl.textContent = 'Configure a Gemini API Key to enable generative reasoning. Manual resolution and SQL retrieval remain active.';
-      dotEl.className = 'w-2 h-2 rounded-full bg-amber-400';
+      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+      if (badgeEl) {
+        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700';
+        badgeEl.textContent = 'Offline';
+      }
+      if (descEl) descEl.textContent = 'Configure a Gemini API Key to enable generative reasoning. Manual resolution and SQL retrieval remain active.';
+      if (detailsEl) detailsEl.classList.add('hidden');
     }
 
     modalAI.classList.remove('hidden');
+  };
+
+  document.getElementById('btn-ai-modal')?.addEventListener('click', openAIModal);
+  document.getElementById('btn-banner-configure-ai')?.addEventListener('click', openAIModal);
+  document.getElementById('btn-close-ai-modal')?.addEventListener('click', closeModals);
+
+  // Toggle key visibility in modal
+  const btnToggle = document.getElementById('btn-toggle-key-visibility');
+  const keyInput = document.getElementById('input-gemini-key');
+  btnToggle?.addEventListener('click', () => {
+    if (keyInput.type === 'password') {
+      keyInput.type = 'text';
+      btnToggle.textContent = 'Hide';
+    } else {
+      keyInput.type = 'password';
+      btnToggle.textContent = 'Show';
+    }
   });
 
-  document.getElementById('btn-close-ai-modal')?.addEventListener('click', closeModals);
+  // Test Connection Button
+  const btnTest = document.getElementById('btn-test-connection');
+  btnTest?.addEventListener('click', async () => {
+    const testBanner = document.getElementById('modal-test-banner');
+    const inputKey = document.getElementById('input-gemini-key').value.trim();
+    const probeKey = inputKey || getStoredApiKey() || undefined;
+
+    btnTest.disabled = true;
+    btnTest.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Probing...</span>';
+
+    try {
+      const res = await fetch(`${API_BASE}/api/system/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: probeKey })
+      });
+      const data = await res.json();
+
+      testBanner.classList.remove('hidden');
+      if (data.success) {
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-emerald-950/80 border border-emerald-800 text-emerald-300';
+        testBanner.innerHTML = `
+          <div class="font-bold flex items-center gap-1.5 text-emerald-400">
+            <i class="fa-solid fa-circle-check"></i>
+            <span>Connection Verified Live!</span>
+          </div>
+          <div>Target Model: <strong class="text-white font-mono">${data.model}</strong> &bull; Latency: <strong class="text-white">${data.latency_ms} ms</strong></div>
+          <div class="text-[10px] text-emerald-400/80">Probe reply: "${data.probe_response || 'PONG'}" &bull; Key: ${data.masked_key || '***'}</div>
+        `;
+      } else {
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
+        testBanner.innerHTML = `
+          <div class="font-bold flex items-center gap-1.5 text-red-400">
+            <i class="fa-solid fa-triangle-exclamation"></i>
+            <span>Connection Failed</span>
+          </div>
+          <div class="font-mono text-[10px] text-red-200 mt-1">${data.error || data.message || 'Unknown provider error'}</div>
+        `;
+      }
+      await checkAIStatus();
+    } catch (err) {
+      testBanner.classList.remove('hidden');
+      testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
+      testBanner.innerHTML = `
+        <div class="font-bold text-red-400"><i class="fa-solid fa-circle-xmark mr-1"></i>Request Error</div>
+        <div>${err.message}</div>
+      `;
+    } finally {
+      btnTest.disabled = false;
+      btnTest.innerHTML = '<i class="fa-solid fa-satellite-dish text-blue-400"></i><span>Test Connection</span>';
+    }
+  });
 
   // Save Gemini Key
   document.getElementById('btn-save-gemini-key')?.addEventListener('click', async () => {
     const key = document.getElementById('input-gemini-key').value.trim();
     if (!key) {
-      alert('Please paste a valid Google Gemini API Key.');
+      alert('Please enter a valid Google Gemini API Key.');
       return;
     }
     try {
+      // 1. Save to backend runtime & .env
       const res = await fetch(`${API_BASE}/api/system/api-key`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ api_key: key })
       });
       const data = await res.json();
-      alert('Gemini API key successfully saved and active!');
+
+      // 2. Persist to localStorage for frontend requests
+      localStorage.setItem('iris_gemini_key', key);
+
+      // 3. Proactively test connection
+      const testRes = await fetch(`${API_BASE}/api/system/test-connection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: key })
+      });
+      const testData = await testRes.json();
+
       await checkAIStatus();
+
+      if (testData.success) {
+        alert(`Success! Gemini API Key activated and verified live (${testData.latency_ms}ms latency).`);
+      } else {
+        alert(`API Key saved to environment, but connection test failed:\n${testData.error || testData.message}`);
+      }
       closeModals();
     } catch (err) {
       alert('Failed to activate API Key: ' + err.message);
+    }
+  });
+
+  // Clear / Disconnect Key
+  document.getElementById('btn-clear-gemini-key')?.addEventListener('click', async () => {
+    if (!confirm('Clear the configured Gemini API key and switch to Manual Resolution mode?')) return;
+    try {
+      localStorage.removeItem('iris_gemini_key');
+      document.getElementById('input-gemini-key').value = '';
+      await fetch(`${API_BASE}/api/system/api-key`, { method: 'DELETE' });
+      await checkAIStatus();
+      closeModals();
+      alert('Gemini API key cleared. System is in Manual Resolution Mode.');
+    } catch (err) {
+      alert('Failed to clear API key: ' + err.message);
     }
   });
 
