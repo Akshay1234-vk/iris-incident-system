@@ -32,3 +32,14 @@ code, pre, .font-mono {
   border-bottom-color: #ffffff;
   color: #ffffff;
 }
+
+/* Modals overlay priority */
+#modal-ai, #modal-user {
+  z-index: 100 !important;
+}
+
+/* Ensure modal dialog card is above the backdrop */
+#modal-ai > div, #modal-user > div {
+  z-index: 101 !important;
+  position: relative;
+}

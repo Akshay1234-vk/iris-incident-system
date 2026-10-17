@@ -59,9 +59,7 @@ const PRESETS = {
 // Initialize Dashboard on Load
 document.addEventListener('DOMContentLoaded', async () => {
   initTabs();
-  await loadUsers();
-  await checkAIStatus();
-  await refreshStats();
+  setupModals(); // Set up modals and global event delegation FIRST
   setupPresets();
   setupAutoClassifier();
   setupFormHandler();
@@ -69,8 +67,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupAcceptSolutionHandler();
   setupDatabaseExplorer();
   setupKnowledgeBase();
-  setupModals();
   setupResetButton();
+
+  // Async data loading
+  await loadUsers();
+  await checkAIStatus();
+  await refreshStats();
 });
 
 // Helper: retrieve client-side stored API key
@@ -241,7 +243,7 @@ function setupPresets() {
 let autoClassifyTimer = null;
 function setupAutoClassifier() {
   const titleInput = document.getElementById('input-title');
-  titleInput.addEventListener('input', () => {
+  titleInput?.addEventListener('input', () => {
     clearTimeout(autoClassifyTimer);
     const titleVal = titleInput.value.trim();
     if (titleVal.length < 4) {
@@ -301,6 +303,7 @@ function setupAutoClassifier() {
 function setupFormHandler() {
   const form = document.getElementById('problem-form');
   const btn = document.getElementById('btn-submit-problem');
+  if (!form || !btn) return;
 
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -400,9 +403,9 @@ function setupEditToggle() {
 }
 
 function renderAIAnalysis(data) {
-  document.getElementById('ai-placeholder').classList.add('hidden');
+  document.getElementById('ai-placeholder')?.classList.add('hidden');
   const container = document.getElementById('ai-output-container');
-  container.classList.remove('hidden');
+  container?.classList.remove('hidden');
 
   // SQL Context Box
   const sqlBox = document.getElementById('sql-query-display');
@@ -527,7 +530,7 @@ function renderAIAnalysis(data) {
 // 8. Accept Solution & Close the Loop in SQL
 function setupAcceptSolutionHandler() {
   const btn = document.getElementById('btn-accept-solution');
-  btn.addEventListener('click', async () => {
+  btn?.addEventListener('click', async () => {
     if (!currentActiveProblemId || !currentAIAnalysis) return;
 
     const tRoot = document.getElementById('edit-root-cause');
@@ -614,14 +617,15 @@ function setupDatabaseExplorer() {
   });
 
   // Execute Button
-  document.getElementById('btn-execute-sql').addEventListener('click', executeSQLConsole);
+  document.getElementById('btn-execute-sql')?.addEventListener('click', executeSQLConsole);
 }
 
 async function executeSQLConsole() {
-  const sql = document.getElementById('sql-console-input').value.trim();
+  const sql = document.getElementById('sql-console-input')?.value.trim();
   const resContainer = document.getElementById('sql-custom-result');
   const thead = document.getElementById('custom-table-head');
   const tbody = document.getElementById('custom-table-body');
+  if (!sql) return;
 
   try {
     const res = await fetch(`${API_BASE}/api/explorer/query`, {
@@ -771,28 +775,161 @@ function setupKnowledgeBase() {
   });
 }
 
-// 11. Modals & Settings Management
-function setupModals() {
-  const modalUser = document.getElementById('modal-user');
+// 11. Modals & Settings Management (Exposed Globally + Event Delegated)
+
+function renderModalStatus(ai) {
+  if (!ai) return;
+  const titleEl = document.getElementById('modal-ai-title');
+  const descEl = document.getElementById('modal-ai-desc');
+  const dotEl = document.getElementById('modal-ai-dot');
+  const badgeEl = document.getElementById('modal-ai-badge');
+  const maskedKeyEl = document.getElementById('modal-masked-key');
+  const detailsEl = document.getElementById('modal-ai-details');
+  const modelNameEl = document.getElementById('modal-ai-model-name');
+
+  if (modelNameEl) modelNameEl.textContent = ai.model || 'gemini-2.5-flash';
+  if (maskedKeyEl) maskedKeyEl.textContent = ai.masked_key || 'None';
+
+  const status = ai.status || (ai.configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED');
+  if (titleEl) titleEl.textContent = status;
+
+  if (status === 'VERIFIED_LIVE') {
+    if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
+    if (badgeEl) {
+      badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800';
+      badgeEl.textContent = 'Verified Live';
+    }
+    if (descEl) descEl.textContent = ai.description || 'Connected and verified live with Gemini. Database-Augmented Generation active.';
+    if (detailsEl) {
+      detailsEl.textContent = `Last verified at: ${ai.last_verified_at || 'Just now'}`;
+      detailsEl.classList.remove('hidden');
+    }
+  } else if (status === 'CONFIGURED_UNVERIFIED') {
+    if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-blue-400';
+    if (badgeEl) {
+      badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-blue-950 text-blue-300 border border-blue-800';
+      badgeEl.textContent = 'Configured (Unverified)';
+    }
+    if (descEl) descEl.textContent = ai.description || 'API key is configured. Click "Test Connection" to perform a live probe.';
+    if (detailsEl) detailsEl.classList.add('hidden');
+  } else if (status === 'PROVIDER_ERROR') {
+    if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-red-400';
+    if (badgeEl) {
+      badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-red-950 text-red-300 border border-red-800';
+      badgeEl.textContent = 'Provider Error';
+    }
+    if (descEl) descEl.textContent = ai.last_error || 'Encountered error communicating with Gemini provider.';
+    if (detailsEl) detailsEl.classList.add('hidden');
+  } else {
+    if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+    if (badgeEl) {
+      badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700';
+      badgeEl.textContent = 'Offline';
+    }
+    if (descEl) descEl.textContent = 'Configure a Gemini API Key to enable generative reasoning. Manual resolution and SQL retrieval remain active.';
+    if (detailsEl) detailsEl.classList.add('hidden');
+  }
+}
+
+// Global openAIModal: opens instantly, zero latency or blocked click
+async function openAIModal() {
   const modalAI = document.getElementById('modal-ai');
+  if (!modalAI) return;
 
-  // Open User Modal
-  document.getElementById('btn-user-modal')?.addEventListener('click', () => {
-    renderUserSelectionList();
-    modalUser.classList.remove('hidden');
+  // 1. Immediately display modal without waiting for network
+  modalAI.classList.remove('hidden');
+
+  // 2. Pre-fill key from localStorage if input is empty
+  const keyInput = document.getElementById('input-gemini-key');
+  const savedLocal = getStoredApiKey();
+  if (keyInput && savedLocal && !keyInput.value) {
+    keyInput.value = savedLocal;
+  }
+
+  // 3. Clear transient test banner
+  const testBanner = document.getElementById('modal-test-banner');
+  if (testBanner) testBanner.classList.add('hidden');
+
+  // 4. Render cached or default status immediately
+  renderModalStatus(cachedAIStatus || {
+    status: 'NOT_CONFIGURED',
+    configured: false,
+    model: 'gemini-2.5-flash',
+    masked_key: null,
+    description: 'Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY.'
   });
 
-  document.getElementById('btn-switch-operator-inline')?.addEventListener('click', () => {
-    renderUserSelectionList();
-    modalUser.classList.remove('hidden');
+  // 5. In background, refresh live status from backend
+  try {
+    const ai = await checkAIStatus();
+    if (ai) renderModalStatus(ai);
+  } catch (err) {
+    console.error('Failed to background refresh status in modal:', err);
+  }
+}
+
+function openUserModal() {
+  renderUserSelectionList();
+  document.getElementById('modal-user')?.classList.remove('hidden');
+}
+
+function closeModals() {
+  document.getElementById('modal-user')?.classList.add('hidden');
+  document.getElementById('modal-ai')?.classList.add('hidden');
+}
+
+// Attach globally for inline handlers / console access
+window.openAIModal = openAIModal;
+window.openUserModal = openUserModal;
+window.closeModals = closeModals;
+
+function setupModals() {
+  // Global Event Delegation for reliable click interception (works across dynamic re-renders)
+  document.addEventListener('click', (e) => {
+    // 1. AI Settings Triggers
+    const aiTrigger = e.target.closest('#btn-ai-modal, #btn-banner-configure-ai, .btn-configure-ai, [data-action="open-ai-settings"]');
+    if (aiTrigger) {
+      e.preventDefault();
+      e.stopPropagation();
+      openAIModal();
+      return;
+    }
+
+    // 2. User Directory Triggers
+    const userTrigger = e.target.closest('#btn-user-modal, #btn-switch-operator-inline, [data-action="open-user-settings"]');
+    if (userTrigger) {
+      e.preventDefault();
+      e.stopPropagation();
+      openUserModal();
+      return;
+    }
+
+    // 3. Modal Close Buttons
+    if (e.target.closest('#btn-close-ai-modal, #btn-close-user-modal')) {
+      e.preventDefault();
+      closeModals();
+      return;
+    }
+
+    // 4. Modal Backdrop Clicks
+    const modalAI = document.getElementById('modal-ai');
+    const modalUser = document.getElementById('modal-user');
+    if (e.target === modalAI || e.target === modalUser) {
+      closeModals();
+    }
   });
 
-  document.getElementById('btn-close-user-modal')?.addEventListener('click', closeModals);
+  // Keyboard accessibility: Escape key closes active modals
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' || e.key === 'Esc') {
+      closeModals();
+    }
+  });
 
-  // Add new user
+  // Add new user form submission
   document.getElementById('btn-add-user')?.addEventListener('click', async () => {
-    const name = document.getElementById('new-user-fullname').value.trim();
-    const role = document.getElementById('new-user-role').value.trim();
+    const name = document.getElementById('new-user-fullname')?.value.trim();
+    const role = document.getElementById('new-user-role')?.value.trim();
     if (!name || !role) {
       alert('Please enter both Full Name and Role.');
       return;
@@ -816,77 +953,6 @@ function setupModals() {
     }
   });
 
-  // Open AI Modal
-  const openAIModal = async () => {
-    const ai = await checkAIStatus();
-    if (!ai) return;
-
-    const titleEl = document.getElementById('modal-ai-title');
-    const descEl = document.getElementById('modal-ai-desc');
-    const dotEl = document.getElementById('modal-ai-dot');
-    const badgeEl = document.getElementById('modal-ai-badge');
-    const maskedKeyEl = document.getElementById('modal-masked-key');
-    const detailsEl = document.getElementById('modal-ai-details');
-    const testBanner = document.getElementById('modal-test-banner');
-    const modelNameEl = document.getElementById('modal-ai-model-name');
-    const keyInput = document.getElementById('input-gemini-key');
-
-    if (testBanner) testBanner.classList.add('hidden');
-    if (modelNameEl) modelNameEl.textContent = ai.model || 'gemini-2.5-flash';
-    if (maskedKeyEl) maskedKeyEl.textContent = ai.masked_key || 'None';
-
-    const savedLocal = getStoredApiKey();
-    if (keyInput && savedLocal && !keyInput.value) {
-      keyInput.value = savedLocal;
-    }
-
-    const status = ai.status || (ai.configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED');
-    if (titleEl) titleEl.textContent = status;
-
-    if (status === 'VERIFIED_LIVE') {
-      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400';
-      if (badgeEl) {
-        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-800';
-        badgeEl.textContent = 'Verified Live';
-      }
-      if (descEl) descEl.textContent = ai.description || 'Connected and verified live with Gemini. Database-Augmented Generation active.';
-      if (detailsEl) {
-        detailsEl.textContent = `Last verified at: ${ai.last_verified_at || 'Just now'}`;
-        detailsEl.classList.remove('hidden');
-      }
-    } else if (status === 'CONFIGURED_UNVERIFIED') {
-      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-blue-400';
-      if (badgeEl) {
-        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-blue-950 text-blue-300 border border-blue-800';
-        badgeEl.textContent = 'Configured (Unverified)';
-      }
-      if (descEl) descEl.textContent = ai.description || 'API key is configured. Run "Test Connection" to perform a live probe.';
-      if (detailsEl) detailsEl.classList.add('hidden');
-    } else if (status === 'PROVIDER_ERROR') {
-      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-red-400';
-      if (badgeEl) {
-        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-red-950 text-red-300 border border-red-800';
-        badgeEl.textContent = 'Provider Error';
-      }
-      if (descEl) descEl.textContent = ai.last_error || 'Encountered error communicating with Gemini provider.';
-      if (detailsEl) detailsEl.classList.add('hidden');
-    } else {
-      if (dotEl) dotEl.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
-      if (badgeEl) {
-        badgeEl.className = 'px-2 py-0.5 rounded font-mono text-[10px] bg-zinc-800 text-zinc-400 border border-zinc-700';
-        badgeEl.textContent = 'Offline';
-      }
-      if (descEl) descEl.textContent = 'Configure a Gemini API Key to enable generative reasoning. Manual resolution and SQL retrieval remain active.';
-      if (detailsEl) detailsEl.classList.add('hidden');
-    }
-
-    modalAI.classList.remove('hidden');
-  };
-
-  document.getElementById('btn-ai-modal')?.addEventListener('click', openAIModal);
-  document.getElementById('btn-banner-configure-ai')?.addEventListener('click', openAIModal);
-  document.getElementById('btn-close-ai-modal')?.addEventListener('click', closeModals);
-
   // Toggle key visibility in modal
   const btnToggle = document.getElementById('btn-toggle-key-visibility');
   const keyInput = document.getElementById('input-gemini-key');
@@ -904,8 +970,23 @@ function setupModals() {
   const btnTest = document.getElementById('btn-test-connection');
   btnTest?.addEventListener('click', async () => {
     const testBanner = document.getElementById('modal-test-banner');
-    const inputKey = document.getElementById('input-gemini-key').value.trim();
+    const inputKey = (document.getElementById('input-gemini-key')?.value || '').trim();
     const probeKey = inputKey || getStoredApiKey() || undefined;
+
+    if (!probeKey) {
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-amber-950/80 border border-amber-800 text-amber-300';
+        testBanner.innerHTML = `
+          <div class="font-bold flex items-center gap-1.5 text-amber-400">
+            <i class="fa-solid fa-circle-info"></i>
+            <span>No API Key Entered</span>
+          </div>
+          <div>Please enter a key above or configure GEMINI_API_KEY in .env before running test connection.</div>
+        `;
+      }
+      return;
+    }
 
     btnTest.disabled = true;
     btnTest.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Probing...</span>';
@@ -918,35 +999,40 @@ function setupModals() {
       });
       const data = await res.json();
 
-      testBanner.classList.remove('hidden');
-      if (data.success) {
-        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-emerald-950/80 border border-emerald-800 text-emerald-300';
-        testBanner.innerHTML = `
-          <div class="font-bold flex items-center gap-1.5 text-emerald-400">
-            <i class="fa-solid fa-circle-check"></i>
-            <span>Connection Verified Live!</span>
-          </div>
-          <div>Target Model: <strong class="text-white font-mono">${data.model}</strong> &bull; Latency: <strong class="text-white">${data.latency_ms} ms</strong></div>
-          <div class="text-[10px] text-emerald-400/80">Probe reply: "${data.probe_response || 'PONG'}" &bull; Key: ${data.masked_key || '***'}</div>
-        `;
-      } else {
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        if (data.success) {
+          testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-emerald-950/80 border border-emerald-800 text-emerald-300';
+          testBanner.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5 text-emerald-400">
+              <i class="fa-solid fa-circle-check"></i>
+              <span>Connection Verified Live!</span>
+            </div>
+            <div>Target Model: <strong class="text-white font-mono">${data.model}</strong> &bull; Latency: <strong class="text-white">${data.latency_ms} ms</strong></div>
+            <div class="text-[10px] text-emerald-400/80">Probe reply: "${data.probe_response || 'PONG'}" &bull; Key: ${data.masked_key || '***'}</div>
+          `;
+        } else {
+          testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
+          testBanner.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5 text-red-400">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>Connection Failed</span>
+            </div>
+            <div class="font-mono text-[10px] text-red-200 mt-1">${data.error || data.message || 'Unknown provider error'}</div>
+          `;
+        }
+      }
+      const ai = await checkAIStatus();
+      if (ai) renderModalStatus(ai);
+    } catch (err) {
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
         testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
         testBanner.innerHTML = `
-          <div class="font-bold flex items-center gap-1.5 text-red-400">
-            <i class="fa-solid fa-triangle-exclamation"></i>
-            <span>Connection Failed</span>
-          </div>
-          <div class="font-mono text-[10px] text-red-200 mt-1">${data.error || data.message || 'Unknown provider error'}</div>
+          <div class="font-bold text-red-400"><i class="fa-solid fa-circle-xmark mr-1"></i>Request Error</div>
+          <div>${err.message}</div>
         `;
       }
-      await checkAIStatus();
-    } catch (err) {
-      testBanner.classList.remove('hidden');
-      testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
-      testBanner.innerHTML = `
-        <div class="font-bold text-red-400"><i class="fa-solid fa-circle-xmark mr-1"></i>Request Error</div>
-        <div>${err.message}</div>
-      `;
     } finally {
       btnTest.disabled = false;
       btnTest.innerHTML = '<i class="fa-solid fa-satellite-dish text-blue-400"></i><span>Test Connection</span>';
@@ -954,12 +1040,25 @@ function setupModals() {
   });
 
   // Save Gemini Key
-  document.getElementById('btn-save-gemini-key')?.addEventListener('click', async () => {
-    const key = document.getElementById('input-gemini-key').value.trim();
+  const btnSave = document.getElementById('btn-save-gemini-key');
+  btnSave?.addEventListener('click', async () => {
+    const key = (document.getElementById('input-gemini-key')?.value || '').trim();
+    const testBanner = document.getElementById('modal-test-banner');
+
     if (!key) {
-      alert('Please enter a valid Google Gemini API Key.');
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-amber-950/80 border border-amber-800 text-amber-300';
+        testBanner.innerHTML = '<div class="font-bold"><i class="fa-solid fa-circle-exclamation mr-1"></i>Please enter a valid Google Gemini API Key.</div>';
+      } else {
+        alert('Please enter a valid Google Gemini API Key.');
+      }
       return;
     }
+
+    btnSave.disabled = true;
+    btnSave.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Saving & Testing...</span>';
+
     try {
       // 1. Save to backend runtime & .env
       const res = await fetch(`${API_BASE}/api/system/api-key`, {
@@ -980,16 +1079,40 @@ function setupModals() {
       });
       const testData = await testRes.json();
 
-      await checkAIStatus();
+      const ai = await checkAIStatus();
+      if (ai) renderModalStatus(ai);
 
-      if (testData.success) {
-        alert(`Success! Gemini API Key activated and verified live (${testData.latency_ms}ms latency).`);
-      } else {
-        alert(`API Key saved to environment, but connection test failed:\n${testData.error || testData.message}`);
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        if (testData.success) {
+          testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-emerald-950/80 border border-emerald-800 text-emerald-300';
+          testBanner.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5 text-emerald-400">
+              <i class="fa-solid fa-circle-check"></i>
+              <span>Key Saved & Verified Live!</span>
+            </div>
+            <div>Target Model: <strong class="text-white font-mono">${testData.model}</strong> &bull; Latency: <strong class="text-white">${testData.latency_ms} ms</strong></div>
+          `;
+        } else {
+          testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-amber-950/80 border border-amber-800 text-amber-300';
+          testBanner.innerHTML = `
+            <div class="font-bold flex items-center gap-1.5 text-amber-400">
+              <i class="fa-solid fa-triangle-exclamation"></i>
+              <span>Key Saved, but Connection Test Failed</span>
+            </div>
+            <div class="font-mono text-[10px] text-amber-200 mt-1">${testData.error || testData.message || 'Unknown error'}</div>
+          `;
+        }
       }
-      closeModals();
     } catch (err) {
-      alert('Failed to activate API Key: ' + err.message);
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-red-950/80 border border-red-800 text-red-300';
+        testBanner.innerHTML = `<div class="font-bold text-red-400"><i class="fa-solid fa-circle-xmark mr-1"></i>Save Error</div><div>${err.message}</div>`;
+      }
+    } finally {
+      btnSave.disabled = false;
+      btnSave.innerHTML = '<i class="fa-solid fa-floppy-disk"></i><span>Save & Activate</span>';
     }
   });
 
@@ -998,37 +1121,36 @@ function setupModals() {
     if (!confirm('Clear the configured Gemini API key and switch to Manual Resolution mode?')) return;
     try {
       localStorage.removeItem('iris_gemini_key');
-      document.getElementById('input-gemini-key').value = '';
+      const keyInput = document.getElementById('input-gemini-key');
+      if (keyInput) keyInput.value = '';
+
       await fetch(`${API_BASE}/api/system/api-key`, { method: 'DELETE' });
-      await checkAIStatus();
-      closeModals();
-      alert('Gemini API key cleared. System is in Manual Resolution Mode.');
+      const ai = await checkAIStatus();
+      if (ai) renderModalStatus(ai);
+
+      const testBanner = document.getElementById('modal-test-banner');
+      if (testBanner) {
+        testBanner.classList.remove('hidden');
+        testBanner.className = 'p-2.5 rounded-lg text-[11px] leading-relaxed bg-zinc-900 border border-zinc-700 text-zinc-300';
+        testBanner.innerHTML = '<div class="flex items-center gap-1.5"><i class="fa-solid fa-circle-check text-blue-400"></i><span>Gemini API key cleared. System is now in Manual Resolution Mode.</span></div>';
+      }
     } catch (err) {
       alert('Failed to clear API key: ' + err.message);
     }
   });
-
-  // Close modals on backdrop click
-  [modalUser, modalAI].forEach(m => {
-    m?.addEventListener('click', (e) => {
-      if (e.target === m) closeModals();
-    });
-  });
 }
 
-function closeModals() {
-  document.getElementById('modal-user')?.classList.add('hidden');
-  document.getElementById('modal-ai')?.classList.add('hidden');
-}
-
-// 12. Refresh Top Header Stats
+// 12. Refresh Top Header Stats (Safe against missing elements)
 async function refreshStats() {
   try {
     const res = await fetch(`${API_BASE}/api/stats`);
     const data = await res.json();
-    document.getElementById('stat-total').textContent = data.total_problems;
-    document.getElementById('stat-resolved').textContent = data.resolved_problems;
-    document.getElementById('stat-rate').textContent = `${data.resolution_rate}%`;
+    const totalEl = document.getElementById('stat-total');
+    const resolvedEl = document.getElementById('stat-resolved');
+    const rateEl = document.getElementById('stat-rate');
+    if (totalEl) totalEl.textContent = data.total_problems;
+    if (resolvedEl) resolvedEl.textContent = data.resolved_problems;
+    if (rateEl) rateEl.textContent = `${data.resolution_rate}%`;
   } catch (err) {
     console.error('Failed to refresh stats:', err);
   }

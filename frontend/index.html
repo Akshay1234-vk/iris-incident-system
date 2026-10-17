@@ -54,7 +54,7 @@
         </button>
 
         <!-- AI Engine Status & Settings Button -->
-        <button id="btn-ai-modal" class="bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded-lg px-2.5 py-1.5 flex items-center space-x-2 transition cursor-pointer text-zinc-200">
+        <button id="btn-ai-modal" data-action="open-ai-settings" class="btn-configure-ai bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 hover:border-zinc-500 rounded-lg px-2.5 py-1.5 flex items-center space-x-2 transition cursor-pointer text-zinc-200">
           <span id="ai-status-dot" class="w-2 h-2 rounded-full bg-amber-400"></span>
           <div class="text-left leading-none">
             <div class="text-[11px] font-semibold text-white flex items-center gap-1">
@@ -73,6 +73,10 @@
         <div class="hidden md:flex items-center space-x-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5">
           <span class="text-zinc-400">Resolved:</span>
           <span id="stat-resolved" class="font-bold text-emerald-400">0</span>
+        </div>
+        <div class="hidden md:flex items-center space-x-1.5 bg-zinc-900 border border-zinc-800 rounded-lg px-2.5 py-1.5">
+          <span class="text-zinc-400">Rate:</span>
+          <span id="stat-rate" class="font-bold text-blue-400">0%</span>
         </div>
         
         <!-- Reset Button -->
@@ -306,7 +310,7 @@
                     <i class="fa-solid fa-triangle-exclamation text-amber-400"></i>
                     <span id="ai-offline-title">AI Engine Unavailable / Key Not Configured</span>
                   </div>
-                  <button type="button" id="btn-banner-configure-ai" class="px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-600/50 text-amber-300 text-[10px] font-medium flex items-center gap-1 cursor-pointer transition">
+                  <button type="button" id="btn-banner-configure-ai" data-action="open-ai-settings" class="btn-configure-ai px-2 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-600/50 text-amber-300 text-[10px] font-medium flex items-center gap-1 cursor-pointer transition">
                     <i class="fa-solid fa-gear"></i><span>Configure Key</span>
                   </button>
                 </div>
