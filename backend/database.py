@@ -314,18 +314,42 @@ def get_all_users() -> List[Dict[str, Any]]:
     return rows
 
 def insert_user(username: str, full_name: str, role: str) -> Dict[str, Any]:
+    username_clean = (username or "").strip().lower()
+    full_name_clean = (full_name or "").strip()
+    role_clean = (role or "").strip()
+
+    if not username_clean:
+        raise ValueError("Username cannot be empty.")
+    if not full_name_clean:
+        raise ValueError("Full name cannot be empty.")
+    if not role_clean:
+        raise ValueError("Role cannot be empty.")
+
     conn = get_db_connection()
     cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE username = ?;", (username_clean,))
+    existing = cursor.fetchone()
+    if existing:
+        conn.close()
+        raise ValueError(f"Username '{username_clean}' already exists.")
+
     now_ts = get_now_ist()
-    cursor.execute(
-        """INSERT INTO users (username, full_name, role, created_at)
-           VALUES (?, ?, ?, ?)""",
-        (username.strip().lower(), full_name.strip(), role.strip(), now_ts)
-    )
-    user_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return {"id": user_id, "username": username, "full_name": full_name, "role": role, "created_at": now_ts}
+    try:
+        cursor.execute(
+            """INSERT INTO users (username, full_name, role, created_at)
+               VALUES (?, ?, ?, ?)""",
+            (username_clean, full_name_clean, role_clean, now_ts)
+        )
+        user_id = cursor.lastrowid
+        conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        raise ValueError(f"Username '{username_clean}' already exists.")
+    finally:
+        conn.close()
+
+    log_query("INSERT", "INSERT INTO users (username, full_name, role, created_at)", (username_clean, full_name_clean, role_clean, now_ts), 1, 1.0)
+    return {"id": user_id, "username": username_clean, "full_name": full_name_clean, "role": role_clean, "created_at": now_ts}
 
 
 def insert_problem(title: str, description: str, category: str, severity: str = "Medium", keywords: str = "", reported_by: str = "Akshay Kumar (Lead SRE)") -> Dict[str, Any]:

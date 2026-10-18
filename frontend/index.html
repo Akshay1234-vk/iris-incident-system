@@ -259,6 +259,57 @@
             </p>
           </div>
 
+          <!-- State 1.5: Incident Persisted & Background AI Progress -->
+          <div id="ai-progress-card" class="hidden bg-zinc-950 border border-zinc-800 rounded-xl p-5 space-y-4">
+            <div class="flex items-center justify-between pb-3 border-b border-zinc-800">
+              <div class="flex items-center space-x-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                <h3 class="text-xs font-bold font-mono text-white uppercase tracking-wider" id="progress-incident-header">Incident Saved</h3>
+              </div>
+              <span id="progress-persistence-time" class="text-[11px] font-mono px-2 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800">Persisted in 8ms</span>
+            </div>
+
+            <div class="space-y-3">
+              <!-- Step 1: SQLite Persistence -->
+              <div class="flex items-start space-x-3 text-xs">
+                <div class="w-5 h-5 rounded-full bg-emerald-900/60 border border-emerald-600 flex items-center justify-center text-emerald-400 text-[10px] shrink-0 mt-0.5">
+                  <i class="fa-solid fa-check"></i>
+                </div>
+                <div>
+                  <div class="font-semibold text-zinc-200">Incident Committed to Relational Database</div>
+                  <div class="text-[11px] text-zinc-400" id="progress-incident-title">Stored in problems table</div>
+                </div>
+              </div>
+
+              <!-- Step 2: FTS5 Historical Retrieval -->
+              <div class="flex items-start space-x-3 text-xs">
+                <div id="step-fts-icon" class="w-5 h-5 rounded-full bg-blue-900/60 border border-blue-600 flex items-center justify-center text-blue-300 text-[10px] shrink-0 mt-0.5">
+                  <i class="fa-solid fa-spinner fa-spin"></i>
+                </div>
+                <div>
+                  <div class="font-semibold text-zinc-200">SQLite FTS5 BM25 Historical Precedent Search</div>
+                  <div class="text-[11px] text-zinc-400" id="step-fts-desc">Searching knowledge base for matching root causes and solutions...</div>
+                </div>
+              </div>
+
+              <!-- Step 3: Google Gemini LLM Reasoning -->
+              <div class="flex items-start space-x-3 text-xs">
+                <div id="step-ai-icon" class="w-5 h-5 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-zinc-400 text-[10px] shrink-0 mt-0.5">
+                  <i class="fa-solid fa-brain"></i>
+                </div>
+                <div>
+                  <div class="font-semibold text-zinc-200">Google Gemini Dynamic Context Synthesis</div>
+                  <div class="text-[11px] text-zinc-400" id="step-ai-desc">Waiting for historical context...</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Animated Progress Bar -->
+            <div class="w-full bg-zinc-900 rounded-full h-1.5 overflow-hidden">
+              <div id="analysis-progress-bar" class="bg-gradient-to-r from-blue-500 via-indigo-500 to-emerald-400 h-1.5 rounded-full w-2/3 transition-all duration-500 animate-pulse"></div>
+            </div>
+          </div>
+
           <!-- State 2: Analysis Output Card -->
           <div id="ai-output-container" class="hidden space-y-4">
             
@@ -636,9 +687,13 @@
       <!-- Add New User Form -->
       <div class="pt-3 border-t border-zinc-800 space-y-2.5">
         <h4 class="text-xs font-bold text-zinc-300">Register New Team Member:</h4>
+        <div id="user-error-banner" class="hidden p-2 rounded text-xs bg-red-950/80 border border-red-800 text-red-300 font-medium"></div>
         <div class="grid grid-cols-2 gap-2">
           <input type="text" id="new-user-fullname" placeholder="Full Name (e.g. Prof. Murugan)" class="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white">
-          <input type="text" id="new-user-role" placeholder="Role (e.g. Faculty Reviewer)" class="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white">
+          <input type="text" id="new-user-username" placeholder="Username (e.g. murugan)" class="bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white">
+        </div>
+        <div>
+          <input type="text" id="new-user-role" placeholder="Role (e.g. Faculty Reviewer)" class="w-full bg-zinc-900 border border-zinc-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-white">
         </div>
         <button type="button" id="btn-add-user" class="w-full bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold py-1.5 rounded-lg text-xs transition cursor-pointer">
           + Add & Switch to this Operator
@@ -692,7 +747,7 @@
         <div>
           <label class="block font-medium text-zinc-300 mb-1">Target Model:</label>
           <div class="bg-zinc-900 border border-zinc-700 rounded-lg px-3 py-1.5 text-xs text-zinc-200 font-mono flex items-center justify-between">
-            <span id="modal-ai-model-name">gemini-2.5-flash</span>
+            <span id="modal-ai-model-name">gemini-3.8-flash</span>
             <span class="text-[10px] text-emerald-400 font-sans">Official Google GenAI SDK</span>
           </div>
         </div>

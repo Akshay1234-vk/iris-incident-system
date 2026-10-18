@@ -41,7 +41,7 @@ In modern engineering organizations, teams repeatedly encounter similar producti
 +--------------------------------------+   +----------------------------------------+
 |      RELATIONAL KNOWLEDGE STORE      |   |            AI RESOLUTION ENGINE        |
 |  SQLite 3 + FTS5 Full-Text Indexing  |   |  Google Gemini (Official google-genai) |
-|  • problems (with reported_by audit) |   |  • Model: gemini-2.5-flash             |
+|  • problems (with reported_by audit) |   |  • Model: gemini-3.8-flash             |
 |  • solutions (with resolved_by audit)|   |  • Structured JSON schema output       |
 |  • users (operator directory)        |   |  • Citations of past database records  |
 |  • sql_query_logs (query audit trail)|   |  • First-principles novel reasoning    |
@@ -139,7 +139,7 @@ python backend/test_ai_engine.py
 ## 🛡️ Key Implementation Details
 
 1. **Genuinely AI-Driven:**
-   - Powered by Google Gemini using the official `google-genai` SDK (`gemini-2.5-flash`).
+   - Powered by Google Gemini using the official `google-genai` SDK (`gemini-3.8-flash`).
    - Zero hardcoded solution dictionaries or static response templates.
    - Confidence scores are evaluated dynamically by the model based on evidence strength, not fabricated arithmetic constants.
 

@@ -9,6 +9,8 @@ Features:
 """
 
 import os
+import time
+import re
 from contextlib import asynccontextmanager
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Query, Header
@@ -66,7 +68,7 @@ class TestConnectionRequest(BaseModel):
     model: Optional[str] = None
 
 class UserCreate(BaseModel):
-    username: str
+    username: Optional[str] = None
     full_name: str
     role: str
 
@@ -136,13 +138,31 @@ def list_users():
 @app.post("/api/users")
 def register_user(payload: UserCreate):
     """Register a new user / operator into the organizational directory."""
-    if not payload.username or not payload.full_name or not payload.role:
-        raise HTTPException(status_code=400, detail="username, full_name, and role are required.")
-    return database.insert_user(
-        username=payload.username,
-        full_name=payload.full_name,
-        role=payload.role
-    )
+    if not payload.full_name or not payload.full_name.strip():
+        raise HTTPException(status_code=400, detail="Full name is required.")
+    if not payload.role or not payload.role.strip():
+        raise HTTPException(status_code=400, detail="Role is required.")
+
+    uname = (payload.username or "").strip().lower()
+    if not uname:
+        uname = re.sub(r'[^a-z0-9]+', '_', payload.full_name.lower()).strip('_')
+        if not uname:
+            uname = "operator"
+
+    try:
+        new_user = database.insert_user(
+            username=uname,
+            full_name=payload.full_name.strip(),
+            role=payload.role.strip()
+        )
+        return new_user
+    except ValueError as ve:
+        err_msg = str(ve)
+        if "already exists" in err_msg.lower():
+            raise HTTPException(status_code=409, detail=err_msg)
+        raise HTTPException(status_code=400, detail=err_msg)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create user: {str(e)}")
 
 @app.get("/api/stats")
 def get_system_stats():
@@ -163,18 +183,41 @@ def get_problem_details(problem_id: int):
     return prob
 
 @app.post("/api/problems")
-def create_problem(payload: ProblemCreate):
-    """Insert a new problem into the relational database with operator audit tracking."""
-    if not payload.title or not payload.description or not payload.category:
+def create_problem(
+    payload: ProblemCreate,
+    x_gemini_api_key: Optional[str] = Header(None, alias="X-Gemini-API-Key")
+):
+    """
+    Promptly insert a new problem into the relational database with operator audit tracking.
+    Immediately returns incident ID and persistence duration (< 50ms) without blocking on Gemini.
+    Promptly triggers background AI analysis.
+    """
+    if not payload.title or not payload.title.strip() or not payload.description or not payload.description.strip() or not payload.category or not payload.category.strip():
         raise HTTPException(status_code=400, detail="Title, description, and category are required.")
     
+    t0 = time.time()
     created = database.insert_problem(
-        title=payload.title,
-        description=payload.description,
-        category=payload.category,
+        title=payload.title.strip(),
+        description=payload.description.strip(),
+        category=payload.category.strip(),
         severity=payload.severity or "Medium",
         keywords=payload.keywords or "",
         reported_by=payload.reported_by or "Akshay Kumar (Lead SRE)"
+    )
+    elapsed_ms = round((time.time() - t0) * 1000, 2)
+    created["persisted_in_ms"] = elapsed_ms
+    created["analysis_status"] = "PENDING"
+
+    # Kick off asynchronous background analysis task
+    ai_engine.start_background_analysis(
+        problem_id=created["id"],
+        title=created["title"],
+        description=created["description"],
+        category=created["category"],
+        severity=created["severity"],
+        keywords=created.get("keywords") or "",
+        reported_by=created.get("reported_by") or "Akshay Kumar (Lead SRE)",
+        custom_api_key=x_gemini_api_key
     )
     return created
 
@@ -182,11 +225,13 @@ def create_problem(payload: ProblemCreate):
 def analyze_problem(
     problem_id: int,
     payload: Optional[AnalyzeRequest] = None,
+    sync: bool = False,
     x_gemini_api_key: Optional[str] = Header(None, alias="X-Gemini-API-Key")
 ):
     """
-    Run the IRIS AI Engine on a logged problem.
-    Executes SQL similarity query against historical solutions and generates recommendations via Gemini.
+    Run or queue AI analysis on a logged problem.
+    If sync=True, waits and returns complete analysis synchronously.
+    If sync=False (default), initiates non-blocking background task and returns task status immediately.
     """
     prob = database.get_problem(problem_id)
     if not prob:
@@ -194,7 +239,20 @@ def analyze_problem(
     
     custom_key = (payload.api_key if payload else None) or x_gemini_api_key
 
-    analysis = ai_engine.analyze_incident_and_recommend(
+    if sync:
+        analysis = ai_engine.analyze_incident_and_recommend(
+            problem_id=prob["id"],
+            title=prob["title"],
+            description=prob["description"],
+            category=prob["category"],
+            severity=prob["severity"],
+            keywords=prob["keywords"] or "",
+            reported_by=prob.get("reported_by", "Anonymous Engineer"),
+            custom_api_key=custom_key
+        )
+        return analysis
+
+    task = ai_engine.start_background_analysis(
         problem_id=prob["id"],
         title=prob["title"],
         description=prob["description"],
@@ -204,7 +262,32 @@ def analyze_problem(
         reported_by=prob.get("reported_by", "Anonymous Engineer"),
         custom_api_key=custom_key
     )
-    return analysis
+    return task
+
+@app.get("/api/problems/{problem_id}/analysis")
+def get_problem_analysis(problem_id: int):
+    """
+    Retrieve current background AI analysis status and results for an incident.
+    Returns status: PENDING | PROCESSING | COMPLETED | FAILED
+    """
+    task = ai_engine.get_analysis_status(problem_id)
+    if task:
+        return task
+
+    prob = database.get_problem(problem_id)
+    if not prob:
+        raise HTTPException(status_code=404, detail=f"Problem with ID {problem_id} not found.")
+
+    task = ai_engine.start_background_analysis(
+        problem_id=prob["id"],
+        title=prob["title"],
+        description=prob["description"],
+        category=prob["category"],
+        severity=prob["severity"],
+        keywords=prob["keywords"] or "",
+        reported_by=prob.get("reported_by", "Anonymous Engineer")
+    )
+    return task
 
 @app.post("/api/problems/{problem_id}/resolve")
 def resolve_problem(problem_id: int, payload: SolutionResolve):

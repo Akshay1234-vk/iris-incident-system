@@ -299,7 +299,7 @@ function setupAutoClassifier() {
   });
 }
 
-// 6. Problem Submission & Real-Time AI Analysis
+// 6. Problem Submission & Asynchronous Background AI Analysis
 function setupFormHandler() {
   const form = document.getElementById('problem-form');
   const btn = document.getElementById('btn-submit-problem');
@@ -308,7 +308,7 @@ function setupFormHandler() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Logging & Retrieving SQL Context...</span>';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i><span>Saving to SQLite...</span>';
 
     const reportedByStr = `${activeUser.full_name} (${activeUser.role})`;
 
@@ -321,42 +321,140 @@ function setupFormHandler() {
       reported_by: reportedByStr
     };
 
+    const placeholder = document.getElementById('ai-placeholder');
+    const progressCard = document.getElementById('ai-progress-card');
+    const outputContainer = document.getElementById('ai-output-container');
+
+    const t0 = performance.now();
+
     try {
-      // Step A: Insert into problems table
+      // Step A: Immediately insert into problems table
+      const storedKey = getStoredApiKey();
+      const headers = { 'Content-Type': 'application/json' };
+      if (storedKey) headers['X-Gemini-API-Key'] = storedKey;
+
       const createRes = await fetch(`${API_BASE}/api/problems`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: headers,
         body: JSON.stringify(problemPayload)
       });
+
+      if (!createRes.ok) {
+        const errData = await createRes.json();
+        throw new Error(errData.detail || 'Failed to save incident to database.');
+      }
+
       const createdProb = await createRes.json();
+      const persistenceTimeMs = Math.round(performance.now() - t0);
       currentActiveProblemId = createdProb.id;
 
-      // Step B: Run AI Analysis
-      btn.innerHTML = '<i class="fa-solid fa-brain fa-fade"></i><span>AI Reasoning over Database Records...</span>';
+      // Immediately show confirmation of persistence in UI
+      if (placeholder) placeholder.classList.add('hidden');
+      if (outputContainer) outputContainer.classList.add('hidden');
+      if (progressCard) {
+        progressCard.classList.remove('hidden');
+        const headerEl = document.getElementById('progress-incident-header');
+        const timeEl = document.getElementById('progress-persistence-time');
+        const titleEl = document.getElementById('progress-incident-title');
+        if (headerEl) headerEl.textContent = `Incident #${createdProb.id} Saved`;
+        if (timeEl) timeEl.textContent = `Persisted in ${persistenceTimeMs}ms`;
+        if (titleEl) titleEl.textContent = `"${createdProb.title}"`;
+      }
 
-      const storedKey = getStoredApiKey();
-      const analyzePayload = {};
-      if (storedKey) analyzePayload.api_key = storedKey;
+      btn.innerHTML = '<i class="fa-solid fa-brain fa-fade text-blue-400"></i><span>AI Reasoning in Background...</span>';
 
-      const analyzeRes = await fetch(`${API_BASE}/api/problems/${currentActiveProblemId}/analyze`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(analyzePayload)
-      });
-      const analysisData = await analyzeRes.json();
-      currentAIAnalysis = analysisData;
+      // Step B: Poll for background AI analysis completion
+      await pollBackgroundAnalysis(createdProb.id, persistenceTimeMs);
 
-      // Render output
-      renderAIAnalysis(analysisData);
       await checkAIStatus();
       await refreshStats();
     } catch (err) {
-      alert(`Error running incident analysis: ${err.message}`);
+      alert(`Error logging incident: ${err.message}`);
     } finally {
       btn.disabled = false;
       btn.innerHTML = '<i class="fa-solid fa-bolt"></i><span>Log to Database & Analyze</span>';
     }
   });
+}
+
+// Polling Helper for Background AI Analysis
+async function pollBackgroundAnalysis(problemId, persistenceTimeMs) {
+  const progressCard = document.getElementById('ai-progress-card');
+  const outputContainer = document.getElementById('ai-output-container');
+  const stepFtsIcon = document.getElementById('step-fts-icon');
+  const stepFtsDesc = document.getElementById('step-fts-desc');
+  const stepAiIcon = document.getElementById('step-ai-icon');
+  const stepAiDesc = document.getElementById('step-ai-desc');
+  const progressBar = document.getElementById('analysis-progress-bar');
+
+  const maxPolls = 30; // 30 * 500ms = 15s max
+  let pollCount = 0;
+
+  while (pollCount < maxPolls) {
+    pollCount++;
+    try {
+      const res = await fetch(`${API_BASE}/api/problems/${problemId}/analysis`);
+      if (res.ok) {
+        const data = await res.json();
+
+        // Update visual progress state
+        if (pollCount > 1 && stepFtsIcon && stepFtsDesc) {
+          stepFtsIcon.className = 'w-5 h-5 rounded-full bg-emerald-900/60 border border-emerald-600 flex items-center justify-center text-emerald-400 text-[10px] shrink-0 mt-0.5';
+          stepFtsIcon.innerHTML = '<i class="fa-solid fa-check"></i>';
+          stepFtsDesc.textContent = 'Historical precedents retrieved via FTS5 BM25.';
+        }
+        if (pollCount > 2 && stepAiIcon && stepAiDesc) {
+          stepAiIcon.className = 'w-5 h-5 rounded-full bg-blue-900/60 border border-blue-600 flex items-center justify-center text-blue-300 text-[10px] shrink-0 mt-0.5';
+          stepAiIcon.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+          stepAiDesc.textContent = 'Synthesizing technical root cause and action checklist via Google Gemini...';
+          if (progressBar) progressBar.style.width = '85%';
+        }
+
+        if (data.status === 'COMPLETED' || data.status === 'FAILED') {
+          if (progressBar) progressBar.style.width = '100%';
+          await new Promise(r => setTimeout(r, 200));
+
+          if (progressCard) progressCard.classList.add('hidden');
+          if (outputContainer) outputContainer.classList.remove('hidden');
+
+          if (data.analysis) {
+            currentAIAnalysis = data.analysis;
+            renderAIAnalysis(data.analysis, {
+              persistenceTimeMs: persistenceTimeMs,
+              aiDurationMs: data.duration_ms
+            });
+          } else {
+            // Render manual / error state
+            renderAIAnalysis({
+              ai_available: false,
+              problem_id: problemId,
+              title: document.getElementById('input-title')?.value || '',
+              status: 'PROVIDER_ERROR',
+              error: data.error || 'AI synthesis encountered a provider error.',
+              sql_context: {
+                query_executed: 'SELECT p.*, s.* FROM problems p LEFT JOIN solutions s ON p.id = s.problem_id',
+                historical_records_retrieved: 0,
+                retrieval_time_ms: 1.0,
+                total_engine_time_ms: data.duration_ms || 0
+              },
+              historical_matches: []
+            }, {
+              persistenceTimeMs: persistenceTimeMs,
+              aiDurationMs: data.duration_ms
+            });
+          }
+          return;
+        }
+      }
+    } catch (pollErr) {
+      console.warn('Poll status error:', pollErr);
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Timeout fallback: reveal output container
+  if (progressCard) progressCard.classList.add('hidden');
+  if (outputContainer) outputContainer.classList.remove('hidden');
 }
 
 // 7. Render AI Analysis Card & SQL Context
@@ -402,8 +500,9 @@ function setupEditToggle() {
   });
 }
 
-function renderAIAnalysis(data) {
+function renderAIAnalysis(data, timings = {}) {
   document.getElementById('ai-placeholder')?.classList.add('hidden');
+  document.getElementById('ai-progress-card')?.classList.add('hidden');
   const container = document.getElementById('ai-output-container');
   container?.classList.remove('hidden');
 
@@ -435,7 +534,13 @@ function renderAIAnalysis(data) {
   const acceptBtnText = document.getElementById('accept-btn-text');
 
   if (titleEl) titleEl.textContent = `Incident #${data.problem_id}: ${data.title}`;
-  if (engineLatencyEl) engineLatencyEl.textContent = `Total Engine: ${data.sql_context?.total_engine_time_ms || 0}ms`;
+  if (engineLatencyEl) {
+    if (timings && timings.persistenceTimeMs) {
+      engineLatencyEl.textContent = `DB: ${timings.persistenceTimeMs}ms • AI: ${timings.aiDurationMs || data.sql_context?.total_engine_time_ms || 0}ms`;
+    } else {
+      engineLatencyEl.textContent = `Total Engine: ${data.sql_context?.total_engine_time_ms || 0}ms`;
+    }
+  }
 
   // Precedents
   const historical = data.historical_matches || [];
@@ -457,7 +562,7 @@ function renderAIAnalysis(data) {
     const rec = data.ai_recommendation;
     offlineBanner?.classList.add('hidden');
 
-    if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Google Gemini (gemini-2.5-flash)';
+    if (modelBadgeEl) modelBadgeEl.textContent = rec.model_used || 'Google Gemini (gemini-3.8-flash)';
     if (confEl) confEl.textContent = rec.confidence_percentage || `${Math.round((rec.confidence_score || 0.9) * 100)}%`;
     if (confLabelEl) confLabelEl.textContent = rec.is_novel ? 'First-Principles Confidence' : 'Evidence-Grounded Confidence';
 
@@ -787,7 +892,7 @@ function renderModalStatus(ai) {
   const detailsEl = document.getElementById('modal-ai-details');
   const modelNameEl = document.getElementById('modal-ai-model-name');
 
-  if (modelNameEl) modelNameEl.textContent = ai.model || 'gemini-2.5-flash';
+  if (modelNameEl) modelNameEl.textContent = ai.model || 'gemini-3.8-flash';
   if (maskedKeyEl) maskedKeyEl.textContent = ai.masked_key || 'None';
 
   const status = ai.status || (ai.configured ? 'CONFIGURED_UNVERIFIED' : 'NOT_CONFIGURED');
@@ -854,7 +959,7 @@ async function openAIModal() {
   renderModalStatus(cachedAIStatus || {
     status: 'NOT_CONFIGURED',
     configured: false,
-    model: 'gemini-2.5-flash',
+    model: 'gemini-3.8-flash',
     masked_key: null,
     description: 'Gemini API key is not configured. Historical SQL retrieval is active; AI synthesis requires GEMINI_API_KEY.'
   });
@@ -869,6 +974,11 @@ async function openAIModal() {
 }
 
 function openUserModal() {
+  const errBanner = document.getElementById('user-error-banner');
+  if (errBanner) {
+    errBanner.textContent = '';
+    errBanner.classList.add('hidden');
+  }
   renderUserSelectionList();
   document.getElementById('modal-user')?.classList.remove('hidden');
 }
@@ -928,28 +1038,64 @@ function setupModals() {
 
   // Add new user form submission
   document.getElementById('btn-add-user')?.addEventListener('click', async () => {
-    const name = document.getElementById('new-user-fullname')?.value.trim();
-    const role = document.getElementById('new-user-role')?.value.trim();
+    const errBanner = document.getElementById('user-error-banner');
+    if (errBanner) {
+      errBanner.textContent = '';
+      errBanner.classList.add('hidden');
+    }
+
+    const name = (document.getElementById('new-user-fullname')?.value || '').trim();
+    const unameInput = (document.getElementById('new-user-username')?.value || '').trim();
+    const role = (document.getElementById('new-user-role')?.value || '').trim();
+
     if (!name || !role) {
-      alert('Please enter both Full Name and Role.');
+      const msg = 'Please enter both Full Name and Role.';
+      if (errBanner) {
+        errBanner.textContent = msg;
+        errBanner.classList.remove('hidden');
+      } else {
+        alert(msg);
+      }
       return;
     }
-    const uname = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
+    const payload = { full_name: name, role: role };
+    if (unameInput) {
+      payload.username = unameInput;
+    }
+
     try {
       const res = await fetch(`${API_BASE}/api/users`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: uname, full_name: name, role: role })
+        body: JSON.stringify(payload)
       });
-      const created = await res.json();
-      registeredUsers.push(created);
-      activeUser = created;
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to add user.');
+      }
+
+      registeredUsers.push(data);
+      activeUser = data;
       updateOperatorUI();
+      renderUserSelectionList();
       closeModals();
+
       document.getElementById('new-user-fullname').value = '';
+      const uEl = document.getElementById('new-user-username');
+      if (uEl) uEl.value = '';
       document.getElementById('new-user-role').value = '';
+
+      if (document.getElementById('tab-explorer')?.classList.contains('hidden') === false) {
+        loadDatabaseTables();
+      }
     } catch (err) {
-      alert('Failed to add user: ' + err.message);
+      if (errBanner) {
+        errBanner.textContent = err.message;
+        errBanner.classList.remove('hidden');
+      } else {
+        alert('Failed to add user: ' + err.message);
+      }
     }
   });
 

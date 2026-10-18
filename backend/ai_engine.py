@@ -13,10 +13,12 @@ import time
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 from datetime import datetime
+import threading
+import concurrent.futures
 
 from database import find_historical_solutions_by_sql, log_query, get_now_ist
 
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
 # Root directory resolution for reliable .env discovery
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -574,3 +576,135 @@ Return ONLY JSON:
             "suggested_description": "",
             "error": str(e)
         }
+
+
+# ============================================================================
+# Asynchronous Background AI Analysis Task Infrastructure
+# ============================================================================
+
+_ANALYSIS_LOCK = threading.Lock()
+_ANALYSIS_TASKS: Dict[int, Dict[str, Any]] = {}
+_ANALYSIS_EXECUTOR = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="iris_ai_worker")
+
+
+def get_analysis_status(problem_id: int) -> Optional[Dict[str, Any]]:
+    """Retrieve current background analysis status and results for a problem."""
+    with _ANALYSIS_LOCK:
+        if problem_id in _ANALYSIS_TASKS:
+            return dict(_ANALYSIS_TASKS[problem_id])
+    return None
+
+
+def clear_analysis_tasks():
+    """Clear in-memory task tracker (useful for test isolation)."""
+    with _ANALYSIS_LOCK:
+        _ANALYSIS_TASKS.clear()
+
+
+def start_background_analysis(
+    problem_id: int,
+    title: Optional[str] = None,
+    description: Optional[str] = None,
+    category: Optional[str] = None,
+    severity: Optional[str] = None,
+    keywords: Optional[str] = None,
+    reported_by: Optional[str] = None,
+    custom_api_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Initiates asynchronous background AI analysis for an incident.
+    Returns immediately with task status (PENDING/PROCESSING) without blocking caller.
+    Avoids spawning duplicate tasks if analysis is already running.
+    """
+    with _ANALYSIS_LOCK:
+        if problem_id in _ANALYSIS_TASKS:
+            existing = _ANALYSIS_TASKS[problem_id]
+            # If already pending or processing, return existing task without spawning duplicate
+            if existing.get("status") in ("PENDING", "PROCESSING"):
+                return dict(existing)
+            # If completed and no custom key override, return existing completed result
+            if existing.get("status") == "COMPLETED" and not custom_api_key:
+                return dict(existing)
+
+        task_record = {
+            "problem_id": problem_id,
+            "status": "PROCESSING",
+            "created_at": get_now_ist(),
+            "started_at": get_now_ist(),
+            "completed_at": None,
+            "analysis": None,
+            "error": None,
+            "duration_ms": 0.0
+        }
+        _ANALYSIS_TASKS[problem_id] = task_record
+
+    def _worker():
+        from database import get_problem
+        t_start = time.time()
+        # Retrieve problem details using independent db connection
+        prob = get_problem(problem_id)
+        if not prob and not title:
+            with _ANALYSIS_LOCK:
+                _ANALYSIS_TASKS[problem_id] = {
+                    "problem_id": problem_id,
+                    "status": "FAILED",
+                    "created_at": task_record["created_at"],
+                    "started_at": task_record["started_at"],
+                    "completed_at": get_now_ist(),
+                    "analysis": None,
+                    "error": f"Problem #{problem_id} not found in database.",
+                    "duration_ms": round((time.time() - t_start) * 1000, 2)
+                }
+            return
+
+        p_title = title or (prob["title"] if prob else "")
+        p_desc = description or (prob["description"] if prob else "")
+        p_cat = category or (prob["category"] if prob else "")
+        p_sev = severity or (prob["severity"] if prob else "Medium")
+        p_keys = keywords if keywords is not None else (prob.get("keywords") if prob else "")
+        p_rep = reported_by or (prob.get("reported_by") if prob else "Anonymous Engineer")
+
+        try:
+            analysis = analyze_incident_and_recommend(
+                problem_id=problem_id,
+                title=p_title,
+                description=p_desc,
+                category=p_cat,
+                severity=p_sev,
+                keywords=p_keys or "",
+                reported_by=p_rep,
+                custom_api_key=custom_api_key
+            )
+            elapsed_ms = round((time.time() - t_start) * 1000, 2)
+            is_success = bool(analysis.get("ai_available"))
+            status = "COMPLETED" if is_success else "FAILED"
+            err = analysis.get("error") if not is_success else None
+
+            with _ANALYSIS_LOCK:
+                _ANALYSIS_TASKS[problem_id] = {
+                    "problem_id": problem_id,
+                    "status": status,
+                    "created_at": task_record["created_at"],
+                    "started_at": task_record["started_at"],
+                    "completed_at": get_now_ist(),
+                    "analysis": analysis,
+                    "error": err,
+                    "duration_ms": elapsed_ms
+                }
+        except Exception as e:
+            elapsed_ms = round((time.time() - t_start) * 1000, 2)
+            with _ANALYSIS_LOCK:
+                _ANALYSIS_TASKS[problem_id] = {
+                    "problem_id": problem_id,
+                    "status": "FAILED",
+                    "created_at": task_record["created_at"],
+                    "started_at": task_record["started_at"],
+                    "completed_at": get_now_ist(),
+                    "analysis": None,
+                    "error": str(e),
+                    "duration_ms": elapsed_ms
+                }
+
+    _ANALYSIS_EXECUTOR.submit(_worker)
+    return dict(task_record)
+
